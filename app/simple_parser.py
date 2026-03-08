@@ -5,6 +5,7 @@ Assumptions / limitations:
 - Expects module definitions to end with `endmodule`.
 - Port extraction is based on module header text and may miss advanced syntax.
 - Instance extraction supports basic `child_mod u1 (...);` style instantiations.
+- Named connection parsing is intentionally simple (`.port(signal)`).
 - Does not attempt to parse full language grammar.
 """
 
@@ -34,8 +35,10 @@ INSTANCE_RE = re.compile(
     flags=re.DOTALL,
 )
 
+# Matches simple named connections like: .clk(clk)
 NAMED_CONNECTION_RE = re.compile(
-    r"\.\s*([A-Za-z_][A-Za-z0-9_$]*)\s*\(\s*([^()]*?)\s*\)"
+    r"\.\s*([A-Za-z_][A-Za-z0-9_$]*)\s*\(\s*([^()]*?)\s*\)",
+    flags=re.DOTALL,
 )
 
 KEYWORDS = {
@@ -103,11 +106,17 @@ def _parse_ports_from_header(header_text: str | None) -> list[Port]:
 
 
 def _parse_connections(connection_text: str) -> dict[str, str]:
-    """Parse named connections like `.a(sig)`; fallback to positional mapping."""
-    named_matches = NAMED_CONNECTION_RE.findall(connection_text)
-    if named_matches:
-        return {port_name: signal.strip() for port_name, signal in named_matches}
+    """Parse named connections first; fallback to positional args for basic coverage."""
+    named_connections: dict[str, str] = {}
+    for port_name, signal in NAMED_CONNECTION_RE.findall(connection_text):
+        clean_signal = " ".join(signal.split())
+        if clean_signal:
+            named_connections[port_name] = clean_signal
 
+    if named_connections:
+        return named_connections
+
+    # Fallback for simple positional instances: child u1(a, b, c);
     positional = [piece.strip() for piece in connection_text.split(",") if piece.strip()]
     return {f"arg{index}": signal for index, signal in enumerate(positional)}
 

@@ -1515,7 +1515,6 @@
             "input_00": "EX_reg_data_b",
             "input_01": "MEM_alu_result",
             "input_10": "WB_mem_to_reg_mux_out",
-            "input_11": "",
             "select": "ALUSrcB",
             "mux_output": "EX_reg_data_b2"
           }
@@ -1527,7 +1526,6 @@
             "input_00": "EX_reg_data_a",
             "input_01": "MEM_alu_result",
             "input_10": "WB_mem_to_reg_mux_out",
-            "input_11": "",
             "select": "ALUSrcA",
             "mux_output": "EX_reg_data_a2"
           }
@@ -1602,7 +1600,6 @@
             "CLK": "clock",
             "reset": "reset",
             "PC_in": "MEM_pc",
-            "PC": "",
             "inst_in": "MEM_inst",
             "alu_result_in": "MEM_alu_result",
             "read_data_in": "MEM_read_data",

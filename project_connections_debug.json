@@ -1,0 +1,352 @@
+{
+  "Processor": {
+    "ForwardingUnit": {
+      "opcode": "EX_inst[6:0]",
+      "rs1": "EX_inst[19:15]",
+      "rs2": "EX_inst[24:20]",
+      "reg_write_WB": "WB_ctl_reg_write",
+      "rd_WB": "WB_inst[11:7]",
+      "reg_write_MEM": "MEM_ctl_reg_write",
+      "rd_MEM": "MEM_inst[11:7]",
+      "ALUSrcA": "ALUSrcA",
+      "ALUSrcB": "ALUSrcB"
+    },
+    "HazardUnit": {
+      "opcode": "ID_inst[6:0]",
+      "ID_EX_mem_read": "EX_ctl_mem_read",
+      "ID_EX_reg_write": "EX_ctl_reg_write",
+      "ID_EX_mem_write": "EX_ctl_mem_write",
+      "rs1": "ID_inst[19:15]",
+      "rs2": "ID_inst[24:20]",
+      "rd_EX": "EX_inst[11:7]",
+      "clock": "clock",
+      "stall": "stall",
+      "IF_ID_write": "IF_ID_write_ctr",
+      "PC_write": "PC_write_ctr",
+      "MEM_inst": "MEM_inst"
+    },
+    "jalr_mux": {
+      "jalr_result": "jalr_target",
+      "PC": "pc_src_mux_out",
+      "jalr": "ID_ctl_JALR",
+      "jalr_out": "real_pc_next"
+    },
+    "pc_src_mux": {
+      "input_0": "new_pc",
+      "input_1": "branch_target",
+      "select": "take_branch",
+      "mux_output": "pc_src_mux_out"
+    },
+    "PC": {
+      "d": "real_pc_next",
+      "CLK": "clock",
+      "we": "PC_write_ctr",
+      "reset": "reset",
+      "default_value": "32'h00000000",
+      "q": "pc_out"
+    },
+    "mem_address_mux": {
+      "input_0": "MEM_alu_result[11:2]",
+      "input_1": "MEM_sp_new[11:2]",
+      "select": "final_callSetup",
+      "mux_output": "actual_address_data_b"
+    },
+    "mem_data_b_mux": {
+      "input_0": "MEM_reg_data_b",
+      "input_1": "MEM_a1",
+      "select": "final_callSetup",
+      "mux_output": "actual_data_b"
+    },
+    "Mem": {
+      "addr_a": "pc_out[11:2]",
+      "we_a": "1'b0",
+      "data_a": "32'b0",
+      "clk_a": "~clock",
+      "q_a": "IF_inst",
+      "addr_b": "actual_address_data_b",
+      "we_b": "MEM_ctl_mem_write",
+      "data_b": "actual_data_b",
+      "clk_b": "~clock",
+      "q_b": "MEM_read_data",
+      "callSetup": "final_callSetup",
+      "data_b2": "MEM_a0",
+      "data_b3": "MEM_ra"
+    },
+    "IF_ID": {
+      "CLK": "clock",
+      "reset": "reset",
+      "write_enable": "IF_ID_write_ctr",
+      "PC_in": "pc_out",
+      "inst_in": "IF_inst",
+      "PC": "ID_pc",
+      "inst": "ID_inst",
+      "link_pc_in": "new_pc",
+      "link_pc": "ID_link_pc",
+      "check_flush": "take_branch | ID_ctl_JALR"
+    },
+    "RegFile": {
+      "reset": "reset",
+      "CLK": "~clock",
+      "write_enable": "WB_ctl_reg_write",
+      "regnum_a": "ID_inst[19:15]",
+      "regnum_b": "ID_inst[24:20]",
+      "write_regnum": "WB_inst[11:7]",
+      "data_in": "WB_mem_to_reg_mux_out",
+      "regdata_a": "ID_reg_data_a",
+      "regdata_b": "ID_reg_data_b",
+      "sp_new": "ID_sp_new",
+      "a0": "ID_a0",
+      "a1": "ID_a1",
+      "ra": "ID_ra"
+    },
+    "comparator": {
+      "funct3": "ID_inst[14:12]",
+      "zero": "ID_reg_data_a == ID_reg_data_b",
+      "resultmsb": "ID_reg_data_a < ID_reg_data_b",
+      "branch_condition": "branch_condition"
+    },
+    "imm_gen": {
+      "instruction": "ID_inst",
+      "imm": "ID_imm_value"
+    },
+    "controlUnit": {
+      "opcode": "ID_inst[6:0]",
+      "ALUSrc": "ID_ctl_alu_src",
+      "MemToReg": "ID_ctl_mem_to_reg",
+      "RegWrite": "ID_ctl_reg_write",
+      "MemRead": "ID_ctl_mem_read",
+      "MemWrite": "ID_ctl_mem_write",
+      "Branch": "ID_ctl_branch",
+      "ALUOp": "ID_ctl_alu_op",
+      "Jump": "ID_ctl_jump",
+      "JALR": "ID_ctl_JALR",
+      "CallSetup": "EX_callSetup"
+    },
+    "stall_mux": {
+      "input_0": "ID_ctl_alu_src",
+      "input_1": "ID_ctl_alu_op",
+      "input_2": "ID_ctl_mem_read",
+      "input_3": "ID_ctl_mem_write",
+      "input_4": "ID_ctl_reg_write",
+      "input_5": "ID_ctl_mem_to_reg",
+      "input_6": "ID_pc",
+      "input_7": "ID_reg_data_a",
+      "input_8": "ID_reg_data_b",
+      "input_9": "ID_imm_value",
+      "input_10": "ID_inst",
+      "input_11": "ID_link_pc",
+      "select": "stall",
+      "output_0": "ID_ctl_alu_src2",
+      "output_1": "ID_ctl_alu_op2",
+      "output_2": "ID_ctl_mem_read2",
+      "output_3": "ID_ctl_mem_write2",
+      "output_4": "ID_ctl_reg_write2",
+      "output_5": "ID_ctl_mem_to_reg2",
+      "output_6": "ID_pc2",
+      "output_7": "ID_reg_data_a2",
+      "output_8": "ID_reg_data_b2",
+      "output_9": "ID_imm_value2",
+      "output_10": "ID_inst2",
+      "output_11": "ID_link_pc2"
+    },
+    "ID_EX": {
+      "CLK": "clock",
+      "reset": "reset",
+      "PC_in": "ID_pc2",
+      "reg_data_a_in": "ID_reg_data_a2",
+      "reg_data_b_in": "ID_reg_data_b2",
+      "imm_value_in": "ID_imm_value2",
+      "inst_in": "ID_inst2",
+      "PC": "EX_pc",
+      "reg_data_a": "EX_reg_data_a",
+      "reg_data_b": "EX_reg_data_b",
+      "imm_value": "EX_imm_value",
+      "inst": "EX_inst",
+      "link_pc_in": "ID_link_pc2",
+      "link_pc": "EX_link_pc",
+      "alu_src_in": "ID_ctl_alu_src2",
+      "alu_op_in": "ID_ctl_alu_op2",
+      "alu_src": "EX_ctl_alu_src",
+      "alu_op": "EX_ctl_alu_op",
+      "mem_read_in": "ID_ctl_mem_read2",
+      "mem_write_in": "ID_ctl_mem_write2",
+      "mem_write": "EX_ctl_mem_write",
+      "mem_read": "EX_ctl_mem_read",
+      "reg_write_in": "ID_ctl_reg_write2",
+      "mem_to_reg_in": "ID_ctl_mem_to_reg2",
+      "reg_write": "EX_ctl_reg_write",
+      "mem_to_reg": "EX_ctl_mem_to_reg",
+      "sp_new_in": "ID_sp_new",
+      "a0_in": "ID_a0",
+      "a1_in": "ID_a1",
+      "ra_in": "ID_ra",
+      "sp_new": "EX_sp_new",
+      "a0": "EX_a0",
+      "a1": "EX_a1",
+      "ra": "EX_ra",
+      "callSetup_in": "EX_callSetup",
+      "callSetup": "MEM_callSetup"
+    },
+    "alu_control": {
+      "ALUOp": "EX_ctl_alu_op",
+      "instruction": "EX_inst",
+      "operation": "EX_alu_operation"
+    },
+    "ALU_src_mux_forward_b": {
+      "input_00": "EX_reg_data_b",
+      "input_01": "MEM_alu_result",
+      "input_10": "WB_mem_to_reg_mux_out",
+      "select": "ALUSrcB",
+      "mux_output": "EX_reg_data_b2"
+    },
+    "ALU_src_mux_forward_a": {
+      "input_00": "EX_reg_data_a",
+      "input_01": "MEM_alu_result",
+      "input_10": "WB_mem_to_reg_mux_out",
+      "select": "ALUSrcA",
+      "mux_output": "EX_reg_data_a2"
+    },
+    "ALU_src_mux": {
+      "input_0": "EX_reg_data_b2",
+      "input_1": "EX_imm_value",
+      "select": "EX_ctl_alu_src",
+      "mux_output": "EX_alu_src_out"
+    },
+    "alu": {
+      "operation": "EX_alu_operation",
+      "din_a": "EX_reg_data_a2",
+      "din_b": "EX_alu_src_out",
+      "dout": "EX_alu_result",
+      "zero": "EX_alu_zero"
+    },
+    "EX_MEM": {
+      "CLK": "clock",
+      "reset": "reset",
+      "PC_in": "EX_pc",
+      "PC": "MEM_pc",
+      "target_in": "EX_target",
+      "alu_zero_in": "EX_alu_zero",
+      "alu_result_in": "EX_alu_result",
+      "imm_value_in": "EX_imm_value",
+      "inst_in": "EX_inst",
+      "reg_data_b_in": "EX_reg_data_b2",
+      "target": "MEM_target",
+      "alu_zero": "MEM_alu_zero",
+      "alu_result": "MEM_alu_result",
+      "imm_value": "MEM_imm_value",
+      "inst": "MEM_inst",
+      "reg_data_b": "MEM_reg_data_b",
+      "mem_read_in": "EX_ctl_mem_read",
+      "mem_write_in": "EX_ctl_mem_write",
+      "mem_write": "MEM_ctl_mem_write",
+      "mem_read": "MEM_ctl_mem_read",
+      "reg_write_in": "EX_ctl_reg_write",
+      "mem_to_reg_in": "EX_ctl_mem_to_reg",
+      "reg_write": "MEM_ctl_reg_write",
+      "mem_to_reg": "MEM_ctl_mem_to_reg",
+      "link_pc_in": "EX_link_pc",
+      "link_pc": "MEM_link_pc",
+      "sp_new_in": "EX_sp_new",
+      "sp_new": "MEM_sp_new",
+      "a0_in": "EX_a0",
+      "a0": "MEM_a0",
+      "a1_in": "EX_a1",
+      "a1": "MEM_a1",
+      "ra_in": "EX_ra",
+      "ra": "MEM_ra",
+      "callSetup_in": "MEM_callSetup",
+      "callSetup": "final_callSetup"
+    },
+    "MEM_WB": {
+      "CLK": "clock",
+      "reset": "reset",
+      "PC_in": "MEM_pc",
+      "inst_in": "MEM_inst",
+      "alu_result_in": "MEM_alu_result",
+      "read_data_in": "MEM_read_data",
+      "inst": "WB_inst",
+      "alu_result": "WB_alu_result",
+      "read_data": "WB_read_data",
+      "imm_value_in": "MEM_imm_value",
+      "imm_value": "WB_imm_value",
+      "link_pc_in": "MEM_link_pc",
+      "link_pc": "WB_link_pc",
+      "reg_write_in": "MEM_ctl_reg_write",
+      "mem_to_reg_in": "MEM_ctl_mem_to_reg",
+      "reg_write": "WB_ctl_reg_write",
+      "mem_to_reg": "WB_ctl_mem_to_reg"
+    },
+    "mem_to_reg_mux": {
+      "input_00": "WB_alu_result",
+      "input_01": "WB_read_data",
+      "input_10": "WB_imm_value",
+      "input_11": "WB_link_pc",
+      "select": "WB_ctl_mem_to_reg",
+      "mux_output": "WB_mem_to_reg_mux_out"
+    }
+  },
+  "tb_Pipe_base_nohaz": {
+    "UUT": {
+      "clock": "CLK",
+      "reset": "reset"
+    }
+  },
+  "tb_Pipe_branch_jump_nohaz": {
+    "UUT": {
+      "clock": "CLK",
+      "reset": "reset"
+    }
+  },
+  "tb_Pipe_hazards": {
+    "UUT": {
+      "clock": "CLK",
+      "reset": "reset"
+    },
+    "check_data_hazard_general": {
+      "arg0": "input [31:0] reg_2_exp",
+      "arg1": "input [31:0] reg_12_exp",
+      "arg2": "input [31:0] reg_13_exp",
+      "arg3": "input [31:0] reg_14_exp",
+      "arg4": "input [31:0] reg_15_exp",
+      "arg5": "input [31:0] mem_minus4_exp",
+      "arg6": "input [31:0] mem_plus4_exp"
+    }
+  },
+  "tb_Processor_Program": {
+    "UUT": {
+      "clock": "CLK",
+      "reset": "reset"
+    },
+    "test_gcd": {
+      "arg0": "input integer n",
+      "arg1": "input integer n2",
+      "arg2": "input integer expected"
+    },
+    "test_relprime": {
+      "arg0": "input integer n",
+      "arg1": "input integer expected"
+    }
+  },
+  "vunit": {
+    "SET_TEST_NAME": {
+      "arg0": "input [127*8:0] name"
+    },
+    "ASSERT": {
+      "arg0": "input val"
+    },
+    "if": {
+      "arg0": "expected !== 'X && val != expected) begin\n        $error(\"ASSERTION FAILED in %0s: expected %0d got %0d\"",
+      "arg1": "G_test_name",
+      "arg2": "expected",
+      "arg3": "val"
+    },
+    "ASSERT_INT_EQUAL": {
+      "arg0": "input integer signed val",
+      "arg1": "input integer signed expected"
+    },
+    "ASSERT_INT_EQUAL_X": {
+      "arg0": "input integer signed val",
+      "arg1": "input integer signed expected"
+    }
+  }
+}
