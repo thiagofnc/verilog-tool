@@ -3,10 +3,12 @@
 import argparse
 
 try:
+    from app.json_exporter import save_project_json
     from app.models import ModuleDef
     from app.scanner import scan_verilog_files
     from app.simple_parser import SimpleRegexParser
 except ImportError:  # Supports running as: python app/main.py
+    from json_exporter import save_project_json
     from models import ModuleDef
     from scanner import scan_verilog_files
     from simple_parser import SimpleRegexParser
@@ -28,6 +30,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=".",
         help="Root directory to scan (default: current directory).",
     )
+    scan_parser.add_argument(
+        "--out",
+        dest="output_path",
+        default=None,
+        help="Optional JSON output path, e.g. out/project.json",
+    )
 
     return parser
 
@@ -44,7 +52,7 @@ def _print_module_details(module: ModuleDef) -> None:
         print(f"        - {instance.name} ({instance.module_name})")
 
 
-def run_scan(root_path: str) -> int:
+def run_scan(root_path: str, output_path: str | None = None) -> int:
     """Scan files, run the simple parser, and print a readable summary."""
     file_paths = scan_verilog_files(root_path)
     project = SimpleRegexParser().parse_files(file_paths)
@@ -56,10 +64,13 @@ def run_scan(root_path: str) -> int:
 
     if not project.modules:
         print("  (none)")
-        return 0
+    else:
+        for module in project.modules:
+            _print_module_details(module)
 
-    for module in project.modules:
-        _print_module_details(module)
+    if output_path:
+        written_path = save_project_json(project, output_path)
+        print(f"JSON saved to: {written_path.resolve()}")
 
     return 0
 
@@ -69,7 +80,7 @@ def main() -> int:
 
     # Dispatch to the selected subcommand.
     if args.command == "scan":
-        return run_scan(args.root_path)
+        return run_scan(args.root_path, args.output_path)
 
     return 1
 
