@@ -14,6 +14,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         description="Simple backend MVP for Verilog/SystemVerilog project scanning.",
     )
 
+    # Subcommands keep room for future actions (parse/export/visualize).
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     scan_parser = subparsers.add_parser("scan", help="Recursively scan for Verilog files")
@@ -28,6 +29,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def run_scan(root_path: str) -> int:
+    """Run file discovery and print a readable list for quick inspection."""
     files = scan_verilog_files(root_path)
     print(f"Found {len(files)} Verilog/SystemVerilog file(s):")
 
@@ -44,6 +46,7 @@ def run_scan(root_path: str) -> int:
 def main() -> int:
     args = build_arg_parser().parse_args()
 
+    # Dispatch to the selected subcommand.
     if args.command == "scan":
         return run_scan(args.root_path)
 

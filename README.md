@@ -1,5 +1,9 @@
 ﻿# rtl_arch_visualizer
 
+## Naming
+
+Still deciding on the final project name: Verilogix, Silica, Verilium, or ArchRTL.
+
 A very simple backend-only MVP scaffold for analyzing Verilog projects.
 
 ## Project Structure
@@ -21,3 +25,5 @@ python -m app.main scan ./example_project
 ```
 
 3. The CLI prints a sorted list of discovered Verilog/SystemVerilog files.
+
+

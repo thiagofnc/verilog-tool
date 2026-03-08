@@ -10,21 +10,25 @@ except ImportError:  # Supports running as: python app/main.py
     from models import ScanResult, VerilogFile
     from parser_base import NoOpParser, ParserBase
 
+# MVP scope: only module source files, not headers/includes.
 VERILOG_EXTENSIONS = {".v", ".sv"}
 WINDOWS_HIDDEN_ATTRIBUTE = 0x2
 
 
 def _name_is_hidden(name: str) -> bool:
+    """Treat dot-prefixed names as hidden (works across platforms)."""
     return name.startswith(".")
 
 
 def _path_is_hidden(path: Path) -> bool:
+    """Handle both dotfiles and Windows hidden attributes."""
     if _name_is_hidden(path.name):
         return True
 
     try:
         stat_result = path.stat()
     except OSError:
+        # If metadata cannot be read, do not block the scan.
         return False
 
     attributes = getattr(stat_result, "st_file_attributes", 0)
@@ -32,6 +36,7 @@ def _path_is_hidden(path: Path) -> bool:
 
 
 def scan_verilog_files(root_path: str) -> list[str]:
+    """Recursively discover visible .v/.sv files and return sorted absolute paths."""
     root = Path(root_path).resolve()
     if not root.exists():
         raise FileNotFoundError(f"Root path does not exist: {root}")
@@ -40,6 +45,7 @@ def scan_verilog_files(root_path: str) -> list[str]:
 
     discovered: list[str] = []
     for current_root, dirnames, filenames in os.walk(root):
+        # In-place filtering tells os.walk which folders to skip entirely.
         dirnames[:] = [
             dirname
             for dirname in dirnames
@@ -54,10 +60,12 @@ def scan_verilog_files(root_path: str) -> list[str]:
             if file_path.suffix.lower() in VERILOG_EXTENSIONS:
                 discovered.append(str(file_path))
 
+    # Stable ordering makes CLI output predictable and test-friendly.
     return sorted(discovered)
 
 
 def scan_project(project_root: str, parser: ParserBase | None = None) -> ScanResult:
+    """Build the existing ScanResult model using the file-discovery step."""
     active_parser = parser or NoOpParser()
     root = Path(project_root).resolve()
 

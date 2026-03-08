@@ -10,6 +10,7 @@ class TestScanVerilogFiles(unittest.TestCase):
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
 
+            # Build a tiny mixed project tree with visible + hidden entries.
             (root / "top.v").write_text("module top; endmodule\n", encoding="utf-8")
             (root / "alu.sv").write_text("module alu; endmodule\n", encoding="utf-8")
             (root / "notes.txt").write_text("ignore me\n", encoding="utf-8")
