@@ -1,13 +1,16 @@
 ﻿"""CLI entry point for rtl_arch_visualizer."""
 
 import argparse
+import json
 
 try:
+    from app.hierarchy import build_hierarchy_tree, infer_top_modules
     from app.json_exporter import save_project_json
     from app.models import ModuleDef
     from app.scanner import scan_verilog_files
     from app.simple_parser import SimpleRegexParser
 except ImportError:  # Supports running as: python app/main.py
+    from hierarchy import build_hierarchy_tree, infer_top_modules
     from json_exporter import save_project_json
     from models import ModuleDef
     from scanner import scan_verilog_files
@@ -52,6 +55,20 @@ def _print_module_details(module: ModuleDef) -> None:
         print(f"        - {instance.name} ({instance.module_name})")
 
 
+def _print_possible_tops(modules: list[ModuleDef]) -> list[str]:
+    top_modules = infer_top_modules(modules)
+    print("Possible top modules (testbench-filtered):")
+
+    if not top_modules:
+        print("  (none)")
+        return top_modules
+
+    for module_name in top_modules:
+        print(f"  - {module_name}")
+
+    return top_modules
+
+
 def run_scan(root_path: str, output_path: str | None = None) -> int:
     """Scan files, run the simple parser, and print a readable summary."""
     file_paths = scan_verilog_files(root_path)
@@ -67,6 +84,14 @@ def run_scan(root_path: str, output_path: str | None = None) -> int:
     else:
         for module in project.modules:
             _print_module_details(module)
+
+    top_modules = _print_possible_tops(project.modules)
+
+    if len(top_modules) == 1:
+        chosen_top = top_modules[0]
+        hierarchy_tree = build_hierarchy_tree(project.modules, chosen_top)
+        print(f"Hierarchy tree ({chosen_top}):")
+        print(json.dumps(hierarchy_tree, indent=2))
 
     if output_path:
         written_path = save_project_json(project, output_path)
