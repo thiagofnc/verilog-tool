@@ -53,31 +53,35 @@ python -m pip install pyverilog
 
 ## How To Run
 
+Replace `"C:\path\to\your\verilog-project"` with your own project folder path.
+
 From the project root (default parser = `pyverilog`):
 
 ```bash
-python -m app.main scan ./example_project
+python -m app.main scan "C:\path\to\your\verilog-project"
 ```
 
 Use regex fallback parser:
 
 ```bash
-python -m app.main scan ./example_project --parser simple
+python -m app.main scan "C:\path\to\your\verilog-project" --parser simple
 ```
 
 With JSON output:
 
 ```bash
-python -m app.main scan ./example_project --parser pyverilog --out out/project.json
+python -m app.main scan "C:\path\to\your\verilog-project" --parser pyverilog --out out/project.json
 ```
 
 With hierarchy graph JSON printed to console:
 
 ```bash
-python -m app.main scan ./example_project --parser pyverilog --graph
+python -m app.main scan "C:\path\to\your\verilog-project" --parser pyverilog --graph
 ```
 
 ## How To Test
+
+Replace `"C:\path\to\your\verilog-project"` with your own project folder path.
 
 1. Run unit tests:
 
@@ -85,16 +89,16 @@ python -m app.main scan ./example_project --parser pyverilog --graph
 python -m unittest discover -s tests -p "test_*.py"
 ```
 
-2. Run full flow on your real project folder with PyVerilog:
+2. Run full flow on your project folder with PyVerilog:
 
 ```bash
-python -m app.main scan "C:\Users\costatf\OneDrive - Rose-Hulman Institute of Technology\Desktop\pipelined-processor-l2-2526a-05" --parser pyverilog --graph --out out/project_pyverilog.json
+python -m app.main scan "C:\path\to\your\verilog-project" --parser pyverilog --graph --out out/project_pyverilog.json
 ```
 
 3. Save summary output to artifacts:
 
 ```bash
-python -m app.main scan "C:\Users\costatf\OneDrive - Rose-Hulman Institute of Technology\Desktop\pipelined-processor-l2-2526a-05" --parser pyverilog --graph --out out/project_pyverilog.json | Tee-Object -FilePath artifacts/summaries/pyverilog_scan_output.txt
+python -m app.main scan "C:\path\to\your\verilog-project" --parser pyverilog --graph --out out/project_pyverilog.json | Tee-Object -FilePath artifacts/summaries/pyverilog_scan_output.txt
 ```
 
 ## Notes and Limitations
