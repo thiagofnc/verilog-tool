@@ -19,6 +19,9 @@ except ImportError:  # Supports running as: python app/main.py
     from simple_parser import SimpleRegexParser
 
 
+PARSER_CHOICES = ("pyverilog", "simple")
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="rtl_arch_visualizer",
@@ -36,6 +39,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Root directory to scan (default: current directory).",
     )
     scan_parser.add_argument(
+        "--parser",
+        dest="parser_backend",
+        choices=PARSER_CHOICES,
+        default="pyverilog",
+        help="Parser backend to use: pyverilog (real parser) or simple (regex).",
+    )
+    scan_parser.add_argument(
         "--out",
         dest="output_path",
         default=None,
@@ -49,6 +59,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
 
     return parser
+
+
+def _create_parser_backend(parser_backend: str):
+    if parser_backend == "simple":
+        return SimpleRegexParser()
+
+    try:
+        from app.pyverilog_parser import PyVerilogParser
+    except ImportError:
+        from pyverilog_parser import PyVerilogParser  # type: ignore
+
+    return PyVerilogParser()
 
 
 def _print_module_details(module: ModuleDef) -> None:
@@ -77,12 +99,26 @@ def _print_possible_tops(modules: list[ModuleDef]) -> list[str]:
     return top_modules
 
 
-def run_scan(root_path: str, output_path: str | None = None, print_graph: bool = False) -> int:
-    """Scan files, run the simple parser, and print a readable summary."""
+def run_scan(
+    root_path: str,
+    parser_backend: str = "pyverilog",
+    output_path: str | None = None,
+    print_graph: bool = False,
+) -> int:
+    """Scan files, parse project, and print a readable summary."""
     file_paths = scan_verilog_files(root_path)
-    project = SimpleRegexParser().parse_files(file_paths)
+
+    try:
+        parser = _create_parser_backend(parser_backend)
+    except Exception as exc:
+        print(f"Failed to initialize parser backend '{parser_backend}': {exc}")
+        print("Tip: install dependencies for pyverilog or use --parser simple")
+        return 2
+
+    project = parser.parse_files(file_paths)
 
     print("Scan Summary")
+    print(f"Parser backend: {parser_backend}")
     print(f"Files found: {len(file_paths)}")
     print(f"Modules found: {len(project.modules)}")
     print("Modules:")
@@ -120,7 +156,12 @@ def main() -> int:
 
     # Dispatch to the selected subcommand.
     if args.command == "scan":
-        return run_scan(args.root_path, args.output_path, args.print_graph)
+        return run_scan(
+            root_path=args.root_path,
+            parser_backend=args.parser_backend,
+            output_path=args.output_path,
+            print_graph=args.print_graph,
+        )
 
     return 1
 
