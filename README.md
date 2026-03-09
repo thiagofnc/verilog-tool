@@ -1,6 +1,6 @@
 # rtl_arch_visualizer
 
-Backend MVP for scanning and structurally analyzing Verilog/SystemVerilog projects, now with a service API and first UI shell.
+Backend MVP for scanning and structurally analyzing Verilog/SystemVerilog projects, now with a service API and an interactive UI viewer shell.
 
 ## Naming
 
@@ -17,10 +17,11 @@ Build an executable, interactive architecture explorer that lets users choose a 
 - normalized datamodel for modules/ports/signals/instances/pin mappings
 - project service layer for reusable backend orchestration
 - top-module inference + hierarchy tree builder
-- stable graph schema (`module`, `instance`, `port`, `net` nodes; `hierarchy`, `signal` edges)
+- stable graph schema (`module`, `instance`, `port`, `net`; `hierarchy`, `signal`)
 - JSON export of parsed project model
 - FastAPI backend endpoints
-- initial desktop-style UI shell served by backend
+- graph viewer MVP in UI using Cytoscape.js
+- hierarchy navigation with top list, tree navigation, and breadcrumb trail
 
 ## Architecture Flow
 
@@ -36,6 +37,7 @@ Build an executable, interactive architecture explorer that lets users choose a 
 3. **Service Layer** (`app/project_service.py`)
    - `load_project(folder)`
    - `get_top_candidates()`
+   - `get_hierarchy_tree(top_module)`
    - `get_module_graph(module_name)`
    - `get_project()`, `get_module()`, `get_module_names()`
 
@@ -45,7 +47,7 @@ Build an executable, interactive architecture explorer that lets users choose a 
 
 5. **Delivery**
    - CLI summary/output (`app/main.py`)
-   - API endpoints + UI shell (`app/api.py`, `ui/`)
+   - API endpoints + UI (`app/api.py`, `ui/`)
 
 ## Output Types
 
@@ -83,9 +85,9 @@ python -m app.main scan "C:\path\to\your\verilog-project" --parser pyverilog --o
 python -m app.main scan "C:\path\to\your\verilog-project" --parser pyverilog --graph
 ```
 
-## API + UI Shell (Step 1 and 2)
+## API + UI Viewer
 
-Install API/UI runtime dependencies:
+Install runtime dependencies:
 
 ```bash
 python -m pip install fastapi uvicorn
@@ -97,16 +99,19 @@ Run server:
 python -m uvicorn app.api:app --reload
 ```
 
-Open UI shell:
+Open UI:
 
 - `http://127.0.0.1:8000/`
 
-What the shell currently provides:
+UI viewer features (steps 3 and 4):
 
 - top toolbar for folder + parser selection
-- left panel for top candidates and module list
-- center graph workspace placeholder with graph summary preview
-- right inspector panel with project/module stats
+- hierarchy navigation panel with top candidates and tree view
+- breadcrumb trail (`Top > Instance > Submodule` path)
+- interactive Cytoscape graph viewer
+- zoom/pan and fit-to-screen
+- node selection and hover labels
+- inspector panel for loaded-project and selected-node details
 
 Current API endpoints:
 
@@ -116,6 +121,7 @@ Current API endpoints:
 - `GET /api/project/tops`
 - `GET /api/project/modules`
 - `GET /api/project/modules/{module_name}`
+- `GET /api/project/hierarchy/{top_module}`
 - `GET /api/project/graph/{module_name}`
 
 ## Testing
@@ -139,7 +145,7 @@ python -m unittest discover -s tests -p "test_*.py"
 - `app/hierarchy.py` - top inference + hierarchy tree
 - `app/graph_builder.py` - stable graph schema builder
 - `app/json_exporter.py` - model JSON export
-- `ui/` - initial UI shell (`index.html`, `styles.css`, `app.js`)
+- `ui/` - viewer assets (`index.html`, `styles.css`, `app.js`)
 - `tests/` - unit tests
 - `out/` - generated model outputs
 - `artifacts/` - scan summaries/debug artifacts
@@ -149,7 +155,8 @@ python -m unittest discover -s tests -p "test_*.py"
 - not a full language elaborator yet
 - some advanced SV constructs are not fully modeled
 - top inference is heuristic
-- graph rendering in UI is currently a shell/preview, not full interactive canvas yet
+- graph layout is MVP-level and can be improved for very large designs
+- Cytoscape is loaded from CDN in the current UI shell
 
 ## Generated Files
 

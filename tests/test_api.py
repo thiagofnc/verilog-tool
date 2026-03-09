@@ -24,13 +24,13 @@ class TestApi(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("No project loaded", response.json()["detail"])
 
-    def test_project_load_and_graph_endpoints(self) -> None:
+    def test_project_load_hierarchy_and_graph_endpoints(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
 
             (root / "child.v").write_text(
                 """
-module child(input clk);
+module child(input clk, input a, output y);
 endmodule
 """.strip()
                 + "\n",
@@ -39,10 +39,12 @@ endmodule
 
             (root / "top.v").write_text(
                 """
-module top(input clk);
+module top(input clk, output y);
   wire local_net;
   child u1 (
-    .clk(clk)
+    .clk(clk),
+    .a(local_net),
+    .y(y)
   );
 endmodule
 """.strip()
@@ -76,11 +78,24 @@ endmodule
             self.assertEqual(module_response.status_code, 200)
             self.assertEqual(module_response.json()["name"], "top")
 
-            graph_response = self.client.get("/api/project/graph/top")
-            self.assertEqual(graph_response.status_code, 200)
-            graph = graph_response.json()
-            self.assertEqual(graph["schema_version"], "1.0")
-            self.assertEqual(graph["top_module"], "top")
+            hierarchy_response = self.client.get("/api/project/hierarchy/top")
+            self.assertEqual(hierarchy_response.status_code, 200)
+            hierarchy = hierarchy_response.json()
+            self.assertEqual(hierarchy["module"], "top")
+            self.assertEqual(hierarchy["instances"][0]["instance"], "u1")
+
+            hierarchy_graph_response = self.client.get("/api/project/graph/top")
+            self.assertEqual(hierarchy_graph_response.status_code, 200)
+            hierarchy_graph = hierarchy_graph_response.json()
+            self.assertEqual(hierarchy_graph["schema_version"], "1.0")
+            self.assertEqual(hierarchy_graph["top_module"], "top")
+
+            connectivity_response = self.client.get("/api/project/connectivity/top?mode=compact")
+            self.assertEqual(connectivity_response.status_code, 200)
+            connectivity_graph = connectivity_response.json()
+            self.assertEqual(connectivity_graph["schema_version"], "1.0-connectivity")
+            self.assertEqual(connectivity_graph["focus_module"], "top")
+            self.assertEqual(connectivity_graph["mode"], "compact")
 
     def test_root_serves_ui_shell(self) -> None:
         response = self.client.get("/")

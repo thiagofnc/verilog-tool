@@ -118,11 +118,33 @@ def get_module(module_name: str) -> dict[str, object]:
         raise _bad_request(str(exc)) from exc
 
 
+@app.get("/api/project/hierarchy/{top_module}")
+def get_hierarchy_tree(top_module: str) -> dict[str, object]:
+    try:
+        with state_lock:
+            return state.service.get_hierarchy_tree(top_module)
+    except (RuntimeError, ValueError) as exc:
+        raise _bad_request(str(exc)) from exc
+
+
 @app.get("/api/project/graph/{module_name}")
 def get_module_graph(module_name: str) -> dict[str, object]:
+    # Backward-compatible hierarchy graph route.
     try:
         with state_lock:
             return state.service.get_module_graph(module_name)
+    except (RuntimeError, ValueError) as exc:
+        raise _bad_request(str(exc)) from exc
+
+
+@app.get("/api/project/connectivity/{module_name}")
+def get_module_connectivity_graph(
+    module_name: str,
+    mode: str = Query(default="compact"),
+) -> dict[str, object]:
+    try:
+        with state_lock:
+            return state.service.get_module_connectivity_graph(module_name, mode=mode)
     except (RuntimeError, ValueError) as exc:
         raise _bad_request(str(exc)) from exc
 

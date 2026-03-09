@@ -3,14 +3,14 @@
 from typing import Any
 
 try:
-    from app.graph_builder import build_hierarchy_graph
-    from app.hierarchy import infer_top_modules
+    from app.graph_builder import build_hierarchy_graph, build_module_connectivity_graph
+    from app.hierarchy import build_hierarchy_tree, infer_top_modules
     from app.models import ModuleDef, Project
     from app.scanner import scan_verilog_files
     from app.simple_parser import SimpleRegexParser
 except ImportError:  # Supports running as: python app/main.py
-    from graph_builder import build_hierarchy_graph
-    from hierarchy import infer_top_modules
+    from graph_builder import build_hierarchy_graph, build_module_connectivity_graph
+    from hierarchy import build_hierarchy_tree, infer_top_modules
     from models import ModuleDef, Project
     from scanner import scan_verilog_files
     from simple_parser import SimpleRegexParser
@@ -75,11 +75,23 @@ class ProjectService:
                 return module
         raise ValueError(f"Module not found in loaded project: {module_name}")
 
+    def get_hierarchy_tree(self, top_module: str) -> dict[str, Any]:
+        """Build a hierarchy tree starting from a selected top module."""
+        project = self._require_project()
+        self.get_module(top_module)
+        return build_hierarchy_tree(project.modules, top_module)
+
     def get_module_graph(self, module_name: str) -> dict[str, Any]:
-        """Build graph JSON for a selected module in the loaded project."""
+        """Build hierarchy graph JSON for a selected module."""
         project = self._require_project()
         self.get_module(module_name)
         return build_hierarchy_graph(project, module_name)
+
+    def get_module_connectivity_graph(self, module_name: str, mode: str = "compact") -> dict[str, Any]:
+        """Build connectivity graph JSON for one module scope."""
+        project = self._require_project()
+        self.get_module(module_name)
+        return build_module_connectivity_graph(project, module_name, mode=mode)
 
     def _require_project(self) -> Project:
         if self.project is None:

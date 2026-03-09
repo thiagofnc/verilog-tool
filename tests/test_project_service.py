@@ -6,13 +6,13 @@ from app.project_service import ProjectService
 
 
 class TestProjectService(unittest.TestCase):
-    def test_load_project_top_candidates_and_module_graph(self) -> None:
+    def test_load_project_top_candidates_hierarchy_and_graphs(self) -> None:
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
 
             (root / "child.v").write_text(
                 """
-module child(input clk);
+module child(input clk, input a, output y);
 endmodule
 """.strip()
                 + "\n",
@@ -21,10 +21,12 @@ endmodule
 
             (root / "top.v").write_text(
                 """
-module top(input clk);
+module top(input clk, output y);
   wire local_net;
   child u1 (
-    .clk(clk)
+    .clk(clk),
+    .a(local_net),
+    .y(y)
   );
 endmodule
 """.strip()
@@ -36,26 +38,31 @@ endmodule
             project = service.load_project(str(root))
 
             self.assertEqual(len(project.source_files), 2)
+            self.assertEqual(service.get_module_names(), ["child", "top"])
 
             top_candidates = service.get_top_candidates()
             self.assertEqual(top_candidates, ["top"])
 
-            graph = service.get_module_graph("top")
-            self.assertEqual(graph["schema_version"], "1.0")
-            self.assertEqual(graph["top_module"], "top")
+            hierarchy = service.get_hierarchy_tree("top")
+            self.assertEqual(hierarchy["module"], "top")
+            self.assertEqual(hierarchy["instances"][0]["instance"], "u1")
 
-            node_ids = {node["id"] for node in graph["nodes"]}
-            edge_tuples = {(edge["source"], edge["target"], edge["kind"]) for edge in graph["edges"]}
+            hierarchy_graph = service.get_module_graph("top")
+            self.assertEqual(hierarchy_graph["schema_version"], "1.0")
 
-            self.assertIn("module:top", node_ids)
-            self.assertIn("instance:top/u1", node_ids)
-            self.assertIn("port:instance:top/u1:clk", node_ids)
+            connectivity_graph = service.get_module_connectivity_graph("top", mode="compact")
+            self.assertEqual(connectivity_graph["schema_version"], "1.0-connectivity")
+            self.assertEqual(connectivity_graph["focus_module"], "top")
 
-            self.assertIn(("module:top", "instance:top/u1", "hierarchy"), edge_tuples)
-            self.assertIn(("net:top:clk", "port:instance:top/u1:clk", "signal"), edge_tuples)
+            node_ids = {node["id"] for node in connectivity_graph["nodes"]}
+            self.assertIn("instance:u1", node_ids)
+            self.assertIn("io:clk", node_ids)
 
             with self.assertRaises(ValueError):
-                service.get_module_graph("missing_module")
+                service.get_hierarchy_tree("missing_module")
+
+            with self.assertRaises(ValueError):
+                service.get_module_connectivity_graph("missing_module")
 
     def test_requires_project_to_be_loaded(self) -> None:
         service = ProjectService(parser_backend="simple")
@@ -64,7 +71,10 @@ endmodule
             service.get_top_candidates()
 
         with self.assertRaises(RuntimeError):
-            service.get_module_graph("top")
+            service.get_hierarchy_tree("top")
+
+        with self.assertRaises(RuntimeError):
+            service.get_module_connectivity_graph("top")
 
 
 if __name__ == "__main__":

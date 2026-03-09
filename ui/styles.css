@@ -1,6 +1,5 @@
-:root {
+﻿:root {
   --bg: #0a0f12;
-  --bg-soft: #111a20;
   --panel: #121f28;
   --panel-2: #0f1920;
   --border: #2b3f4d;
@@ -31,7 +30,7 @@ body {
   background:
     radial-gradient(1200px 800px at 12% -10%, #153042 0%, transparent 55%),
     radial-gradient(1000px 700px at 100% 0%, #1f2d3a 0%, transparent 45%),
-    var(--bg);
+    #0a0f12;
 }
 
 .app-shell {
@@ -90,7 +89,8 @@ body {
 
 .controls input,
 .controls select,
-.controls button {
+.controls button,
+.canvas-actions button {
   border: 1px solid var(--border);
   background: var(--panel-2);
   color: var(--text);
@@ -103,12 +103,14 @@ body {
   min-width: 360px;
 }
 
-.controls button {
+.controls button,
+.canvas-actions button {
   background: #183241;
   cursor: pointer;
 }
 
-.controls button:hover {
+.controls button:hover,
+.canvas-actions button:hover {
   border-color: var(--accent);
 }
 
@@ -142,7 +144,7 @@ body {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 0.95fr 1.8fr 1fr;
+  grid-template-columns: 1fr 1.9fr 1fr;
   gap: 12px;
 }
 
@@ -188,7 +190,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-height: 36vh;
+  max-height: 18vh;
   overflow: auto;
 }
 
@@ -204,14 +206,74 @@ body {
 }
 
 .item-list button:hover,
-.item-list button.active {
+.item-list button.active,
+.tree-module-btn:hover,
+.tree-module-btn.active {
   border-color: var(--accent);
   background: #12313d;
 }
 
+.tree-section {
+  flex: 1;
+  min-height: 0;
+}
+
+.hierarchy-tree {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0d161d;
+  min-height: 220px;
+  max-height: 100%;
+  overflow: auto;
+  padding: 8px;
+  font-size: 0.84rem;
+}
+
+.tree-empty {
+  margin: 0;
+  color: var(--muted);
+}
+
+.tree-root,
+.tree-group {
+  list-style: none;
+  margin: 0;
+  padding-left: 12px;
+}
+
+.tree-item {
+  margin: 4px 0;
+}
+
+.tree-module-btn {
+  border: 1px solid var(--border);
+  background: #11212a;
+  color: var(--text);
+  border-radius: 6px;
+  padding: 4px 7px;
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+
+.tree-instance-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  margin: 4px 0 2px 0;
+}
+
+.tree-instance-chip {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--instance);
+}
+
 .panel-center {
   display: grid;
-  grid-template-rows: auto auto 1fr auto;
+  grid-template-rows: auto auto auto 1fr auto;
   min-height: 0;
 }
 
@@ -228,9 +290,40 @@ body {
   padding: 0;
 }
 
+.canvas-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 #graphTag {
   color: var(--muted);
   font-size: 0.82rem;
+}
+
+.breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  border-bottom: 1px solid var(--border);
+  padding: 8px 12px;
+  min-height: 38px;
+}
+
+.crumb {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 0.76rem;
+  background: #0f1a21;
+}
+
+.crumb.instance {
+  border-color: #8b6a3d;
+}
+
+.crumb.module {
+  border-color: #3a6790;
 }
 
 .graph-stats {
@@ -262,7 +355,7 @@ body {
   margin-right: 4px;
 }
 
-.stat-pill.module {
+.stat-pill.module_io {
   border-color: #3a6790;
 }
 
@@ -282,7 +375,7 @@ body {
   border-color: #5c6974;
 }
 
-.stat-pill.signal {
+.stat-pill.connection {
   border-color: #3a7b62;
 }
 
@@ -290,12 +383,18 @@ body {
   margin: 12px;
   border: 1px dashed #355264;
   border-radius: 10px;
-  min-height: 260px;
+  min-height: 320px;
   position: relative;
   background:
     linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px) 0 0 / 24px 24px,
     linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px) 0 0 / 24px 24px,
     #0c141a;
+  overflow: hidden;
+}
+
+.cy-graph {
+  position: absolute;
+  inset: 0;
 }
 
 .graph-placeholder {
@@ -305,11 +404,36 @@ body {
   place-content: center;
   text-align: center;
   color: var(--muted);
+  pointer-events: none;
+}
+
+.graph-placeholder.hidden {
+  display: none;
 }
 
 .graph-placeholder h3 {
   margin: 0 0 4px;
   color: var(--text);
+}
+
+.hover-tooltip {
+  position: absolute;
+  z-index: 20;
+  pointer-events: none;
+  display: none;
+  max-width: 280px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(10, 18, 23, 0.96);
+  color: var(--text);
+  padding: 6px 8px;
+  font-size: 0.75rem;
+  line-height: 1.3;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.45);
+}
+
+.hover-tooltip .kind {
+  color: var(--muted);
 }
 
 .graph-preview {
@@ -322,7 +446,7 @@ body {
   line-height: 1.35;
   padding: 10px;
   min-height: 150px;
-  max-height: 230px;
+  max-height: 220px;
   overflow: auto;
 }
 
@@ -366,7 +490,7 @@ body {
   flex: 0 0 10px;
 }
 
-.chip.module {
+.chip.module-io {
   background: var(--module);
 }
 
@@ -386,7 +510,7 @@ body {
   background: var(--hierarchy);
 }
 
-.chip.signal {
+.chip.connection {
   background: var(--signal);
 }
 
@@ -396,13 +520,17 @@ body {
   font-size: 0.8rem;
 }
 
-@media (max-width: 1050px) {
+@media (max-width: 1250px) {
   .workspace {
     grid-template-columns: 1fr;
   }
 
   .controls input {
-    min-width: 230px;
+    min-width: 240px;
+  }
+
+  .item-list {
+    max-height: 24vh;
   }
 }
 
