@@ -1,4 +1,4 @@
-"""FastAPI layer for project loading, queries, and basic UI serving."""
+﻿"""FastAPI layer for project loading, queries, and basic UI serving."""
 
 from dataclasses import asdict
 from pathlib import Path
@@ -141,10 +141,11 @@ def get_module_graph(module_name: str) -> dict[str, object]:
 def get_module_connectivity_graph(
     module_name: str,
     mode: str = Query(default="compact"),
+    aggregate_edges: bool = Query(default=False),
 ) -> dict[str, object]:
     try:
         with state_lock:
-            return state.service.get_module_connectivity_graph(module_name, mode=mode)
+            return state.service.get_module_connectivity_graph(module_name, mode=mode, aggregate_edges=aggregate_edges)
     except (RuntimeError, ValueError) as exc:
         raise _bad_request(str(exc)) from exc
 
@@ -161,3 +162,4 @@ def ui_index() -> FileResponse:
     if not UI_DIR.exists():
         raise HTTPException(status_code=404, detail="UI directory not found")
     return FileResponse(UI_DIR / "index.html")
+

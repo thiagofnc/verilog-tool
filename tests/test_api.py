@@ -1,4 +1,4 @@
-import unittest
+﻿import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -97,6 +97,11 @@ endmodule
             self.assertEqual(connectivity_graph["focus_module"], "top")
             self.assertEqual(connectivity_graph["mode"], "compact")
 
+            aggregated_response = self.client.get("/api/project/connectivity/top?mode=compact&aggregate_edges=true")
+            self.assertEqual(aggregated_response.status_code, 200)
+            aggregated_graph = aggregated_response.json()
+            self.assertTrue(all("net_count" in edge for edge in aggregated_graph["edges"]))
+
     def test_root_serves_ui_shell(self) -> None:
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
@@ -105,3 +110,4 @@ endmodule
 
 if __name__ == "__main__":
     unittest.main()
+

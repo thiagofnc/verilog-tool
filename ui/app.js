@@ -1,4 +1,4 @@
-const state = {
+﻿const state = {
   folder: "",
   parser: "pyverilog",
   tops: [],
@@ -13,6 +13,8 @@ const state = {
   selectedEdge: null,
   cy: null,
   graphMode: "compact",
+  aggregateEdges: true,
+  showUnknownEdges: false,
   lastTapNodeId: null,
   lastTapTs: 0,
 };
@@ -22,6 +24,9 @@ const parserSelect = document.getElementById("parserSelect");
 const loadBtn = document.getElementById("loadBtn");
 const refreshBtn = document.getElementById("refreshBtn");
 const fitBtn = document.getElementById("fitBtn");
+const graphModeSelect = document.getElementById("graphModeSelect");
+const aggregateToggle = document.getElementById("aggregateToggle");
+const showUnknownToggle = document.getElementById("showUnknownToggle");
 const statusBadge = document.getElementById("statusBadge");
 const topList = document.getElementById("topList");
 const hierarchyTree = document.getElementById("hierarchyTree");
@@ -71,6 +76,25 @@ function countByKind(items) {
     counts[key] = (counts[key] || 0) + 1;
   }
   return counts;
+}
+
+function getRenderableGraph(graph) {
+  if (!graph) {
+    return null;
+  }
+
+  const edges = (graph.edges || []).filter((edge) => {
+    if (state.showUnknownEdges) {
+      return true;
+    }
+    return edge.flow !== "unknown";
+  });
+
+  return {
+    ...graph,
+    nodes: graph.nodes || [],
+    edges,
+  };
 }
 
 function renderTopList() {
@@ -284,8 +308,8 @@ function ensureCytoscape() {
         style: {
           "background-color": "#3ea6ff",
           shape: "round-rectangle",
-          width: 26,
-          height: 18,
+          width: 30,
+          height: 20,
         },
       },
       {
@@ -312,7 +336,10 @@ function ensureCytoscape() {
           "target-arrow-color": "#42d392",
           "target-arrow-shape": "triangle",
           "arrow-scale": 0.7,
-          "curve-style": "bezier",
+          "curve-style": "taxi",
+          "taxi-direction": "rightward",
+          "taxi-turn": 22,
+          "taxi-turn-min-distance": 12,
         },
       },
       {
@@ -321,6 +348,7 @@ function ensureCytoscape() {
           "line-style": "dashed",
           "line-color": "#98a6b3",
           "target-arrow-color": "#98a6b3",
+          "target-arrow-shape": "none",
         },
       },
       {
@@ -340,7 +368,6 @@ function ensureCytoscape() {
     state.selectedEdge = null;
     renderInspector();
 
-    // Double-click instance node to drill into its module connectivity.
     const now = Date.now();
     const isDoubleTap = state.lastTapNodeId === data.id && now - state.lastTapTs < 360;
     state.lastTapNodeId = data.id;
@@ -380,7 +407,7 @@ function ensureCytoscape() {
 
   state.cy.on("mouseover", "node", (event) => {
     const data = event.target.data();
-    const drillHint = data.kind === "instance" ? "<div class=\"kind\">Double-click to drill into module</div>" : "";
+    const drillHint = data.kind === "instance" ? '<div class="kind">Double-click to drill into module</div>' : "";
     hoverTooltip.innerHTML = `
       <div>${escapeHtml(data.label || data.id)}</div>
       <div class="kind">${escapeHtml(data.kind || "node")} | ${escapeHtml(data.id)}</div>
@@ -393,10 +420,13 @@ function ensureCytoscape() {
 
   state.cy.on("mouseover", "edge", (event) => {
     const data = event.target.data();
+    const netSummary = data.nets?.length ? `${data.nets.slice(0, 4).join(", ")}${data.nets.length > 4 ? " ..." : ""}` : data.net || "(unnamed net)";
+    const countText = data.net_count ? `nets: ${data.net_count}` : "";
+
     hoverTooltip.innerHTML = `
-      <div>${escapeHtml(data.net || "(unnamed net)")}</div>
-      <div class="kind">${escapeHtml(data.source_port || "?")} -> ${escapeHtml(data.target_port || "?")}</div>
-      <div class="kind">${escapeHtml(data.flow || "directed")}</div>
+      <div>${escapeHtml(netSummary)}</div>
+      <div class="kind">${escapeHtml(data.source)} -> ${escapeHtml(data.target)}</div>
+      <div class="kind">${escapeHtml(data.flow || "directed")}${countText ? ` | ${escapeHtml(countText)}` : ""}</div>
     `;
     hoverTooltip.style.display = "block";
     const p = event.renderedPosition;
@@ -446,11 +476,42 @@ function buildCyElements(graph) {
   const edges = (graph.edges || []).map((edge, index) => ({
     data: {
       ...edge,
-      id: `${edge.source}->${edge.target}:${edge.kind || "connection"}:${edge.net || ""}:${index}`,
+      id: `${edge.source}->${edge.target}:${edge.kind || "connection"}:${index}`,
     },
   }));
 
   return [...nodes, ...edges];
+}
+
+function getLayoutRoots(graph) {
+  const nodes = graph.nodes || [];
+  const edges = graph.edges || [];
+
+  const incoming = new Map();
+  for (const node of nodes) {
+    incoming.set(node.id, 0);
+  }
+
+  for (const edge of edges) {
+    if (!incoming.has(edge.target)) {
+      continue;
+    }
+    incoming.set(edge.target, (incoming.get(edge.target) || 0) + 1);
+  }
+
+  const ioInputs = nodes
+    .filter((node) => node.kind === "module_io" && node.direction === "input")
+    .map((node) => node.id);
+  if (ioInputs.length) {
+    return ioInputs;
+  }
+
+  const zeroIncoming = nodes.filter((node) => (incoming.get(node.id) || 0) === 0).map((node) => node.id);
+  if (zeroIncoming.length) {
+    return zeroIncoming;
+  }
+
+  return nodes.length ? [nodes[0].id] : [];
 }
 
 function renderCyGraph(graph) {
@@ -461,15 +522,20 @@ function renderCyGraph(graph) {
   state.cy.elements().remove();
   state.cy.add(buildCyElements(graph));
 
-  const nodeCount = graph.nodes.length;
+  const roots = getLayoutRoots(graph);
   const layout = {
-    name: "cose",
+    name: "breadthfirst",
+    directed: true,
     animate: false,
     padding: 30,
-    fit: true,
-    nodeRepulsion: nodeCount > 350 ? 5500 : 4200,
-    idealEdgeLength: nodeCount > 350 ? 90 : 75,
+    spacingFactor: graph.nodes.length > 120 ? 1.05 : 1.28,
+    avoidOverlap: true,
+    transform: (_node, position) => ({ x: position.y, y: position.x }),
   };
+
+  if (roots.length) {
+    layout.roots = roots;
+  }
 
   state.cy.layout(layout).run();
   state.cy.fit(undefined, 30);
@@ -499,12 +565,17 @@ function renderInspector() {
       <div><span class="k">Double-click behavior:</span> ${state.selectedNode.kind === "instance" ? "Open instance module graph" : "N/A"}</div>
     `;
   } else if (state.selectedEdge) {
+    const netInfo = state.selectedEdge.nets?.length
+      ? `${state.selectedEdge.nets.slice(0, 8).join(", ")}${state.selectedEdge.nets.length > 8 ? " ..." : ""}`
+      : state.selectedEdge.net || "(unnamed net)";
+
     selectionBlock = `
       <hr style="border-color:#2b3f4d;border-style:solid;border-width:1px 0 0; margin:10px 0;" />
-      <div><span class="k">Selected connection:</span> ${escapeHtml(state.selectedEdge.net || "(unnamed net)")}</div>
-      <div><span class="k">From:</span> ${escapeHtml(state.selectedEdge.source)} (${escapeHtml(state.selectedEdge.source_port || "?")})</div>
-      <div><span class="k">To:</span> ${escapeHtml(state.selectedEdge.target)} (${escapeHtml(state.selectedEdge.target_port || "?")})</div>
+      <div><span class="k">Selected connection:</span> ${escapeHtml(netInfo)}</div>
+      <div><span class="k">From:</span> ${escapeHtml(state.selectedEdge.source)}</div>
+      <div><span class="k">To:</span> ${escapeHtml(state.selectedEdge.target)}</div>
       <div><span class="k">Flow:</span> ${escapeHtml(state.selectedEdge.flow || "directed")}</div>
+      <div><span class="k">Net count:</span> ${state.selectedEdge.net_count || 1}</div>
     `;
   }
 
@@ -516,13 +587,16 @@ function renderInspector() {
     <div><span class="k">Top candidates:</span> ${escapeHtml((summary.top_candidates || []).join(", ") || "(none)")}</div>
     <div><span class="k">Selected top:</span> ${escapeHtml(state.selectedTop || "(none)")}</div>
     <div><span class="k">Connectivity focus module:</span> ${escapeHtml(state.selectedModule || "(none)")}</div>
+    <div><span class="k">Graph mode:</span> ${escapeHtml(state.graphMode)}</div>
+    <div><span class="k">Aggregate edges:</span> ${state.aggregateEdges ? "on" : "off"}</div>
+    <div><span class="k">Show unknown:</span> ${state.showUnknownEdges ? "on" : "off"}</div>
     <div><span class="k">Breadcrumb:</span><br>${escapeHtml(breadcrumbText)}</div>
     ${selectionBlock}
   `;
 }
 
-function renderGraph(graph) {
-  if (!graph) {
+function renderGraph(rawGraph) {
+  if (!rawGraph) {
     graphTag.textContent = "No graph loaded";
     graphPreview.textContent = "";
     clearGraphStats();
@@ -536,11 +610,12 @@ function renderGraph(graph) {
     return;
   }
 
+  const graph = getRenderableGraph(rawGraph);
   const nodeCounts = countByKind(graph.nodes || []);
   const edgeCounts = countByKind(graph.edges || []);
 
   const focus = graph.focus_module || graph.top_module || state.selectedModule || "(unknown)";
-  graphTag.textContent = `Connectivity: ${focus} | Mode: ${graph.mode || state.graphMode} | Nodes: ${graph.nodes.length} | Edges: ${graph.edges.length}`;
+  graphTag.textContent = `Connectivity: ${focus} | mode: ${graph.mode || state.graphMode} | nodes: ${graph.nodes.length} | edges: ${graph.edges.length}`;
   renderGraphStats(nodeCounts, edgeCounts);
 
   const preview = {
@@ -548,6 +623,8 @@ function renderGraph(graph) {
     view: graph.view,
     focus_module: focus,
     mode: graph.mode,
+    aggregate_edges: state.aggregateEdges,
+    show_unknown_edges: state.showUnknownEdges,
     interpretation: {
       note: "This view focuses on module-internal wiring between instances and module I/O.",
       drilldown: "Double-click instance node to open that child module connectivity view.",
@@ -579,9 +656,12 @@ async function loadGraph(moduleName, breadcrumb = null) {
   renderBreadcrumb();
   renderHierarchyTree();
 
-  const graph = await apiRequest(
-    `/api/project/connectivity/${encodeURIComponent(moduleName)}?mode=${encodeURIComponent(state.graphMode)}`
-  );
+  const params = new URLSearchParams({
+    mode: state.graphMode,
+    aggregate_edges: String(state.aggregateEdges),
+  });
+
+  const graph = await apiRequest(`/api/project/connectivity/${encodeURIComponent(moduleName)}?${params.toString()}`);
   state.graph = graph;
   state.selectedNode = null;
   state.selectedEdge = null;
@@ -672,11 +752,57 @@ fitBtn.addEventListener("click", () => {
   state.cy.fit(undefined, 30);
 });
 
+graphModeSelect.addEventListener("change", async () => {
+  state.graphMode = graphModeSelect.value;
+  if (!state.selectedModule) {
+    return;
+  }
+
+  try {
+    setStatus("Updating mode...", "busy");
+    await loadGraph(state.selectedModule, state.breadcrumb.length ? [...state.breadcrumb] : [state.selectedModule]);
+    setStatus("Graph updated", "ok");
+  } catch (error) {
+    setStatus("Graph update failed", "error");
+    inspector.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
+  }
+});
+
+aggregateToggle.addEventListener("change", async () => {
+  state.aggregateEdges = aggregateToggle.checked;
+  if (!state.selectedModule) {
+    return;
+  }
+
+  try {
+    setStatus("Updating edges...", "busy");
+    await loadGraph(state.selectedModule, state.breadcrumb.length ? [...state.breadcrumb] : [state.selectedModule]);
+    setStatus("Graph updated", "ok");
+  } catch (error) {
+    setStatus("Graph update failed", "error");
+    inspector.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
+  }
+});
+
+showUnknownToggle.addEventListener("change", () => {
+  state.showUnknownEdges = showUnknownToggle.checked;
+  if (!state.graph) {
+    return;
+  }
+
+  renderGraph(state.graph);
+  renderInspector();
+});
+
 folderInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     handleLoad();
   }
 });
+
+graphModeSelect.value = state.graphMode;
+aggregateToggle.checked = state.aggregateEdges;
+showUnknownToggle.checked = state.showUnknownEdges;
 
 clearGraphStats();
 renderBreadcrumb();

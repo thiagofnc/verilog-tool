@@ -1,91 +1,158 @@
-# rtl_arch_visualizer
+﻿# rtl_arch_visualizer
 
-Backend MVP for scanning and structurally analyzing Verilog/SystemVerilog projects, now with a service API and an interactive UI viewer shell.
+Backend + API + UI MVP for scanning and analyzing Verilog/SystemVerilog projects, with hierarchy navigation and directed connectivity graphs.
 
 ## Naming
 
 Still deciding on the final project name: Verilogix, Silica, Verilium, or ArchRTL.
 
+## MVP Snapshot
+
+This is how the first MVP currently looks:
+
+![First MVP UI](docs/images/mvp_ui.png)
+
 ## Project Goal
 
-Build an executable, interactive architecture explorer that lets users choose a folder and navigate modules, submodules, ports, and signal connectivity with an EDA-style experience.
+Build an executable architecture explorer that lets a user choose a local RTL folder and then interactively inspect:
 
-## Current Status (MVP)
+- project hierarchy
+- module internals
+- instance relationships
+- signal connectivity
 
-- recursive Verilog/SystemVerilog file discovery (`.v`, `.sv`)
-- parser backends: `pyverilog` (AST) and `simple` (regex fallback)
-- normalized datamodel for modules/ports/signals/instances/pin mappings
-- project service layer for reusable backend orchestration
-- top-module inference + hierarchy tree builder
-- stable graph schema (`module`, `instance`, `port`, `net`; `hierarchy`, `signal`)
-- JSON export of parsed project model
-- FastAPI backend endpoints
-- graph viewer MVP in UI using Cytoscape.js
-- hierarchy navigation with top list, tree navigation, and breadcrumb trail
+## What Works So Far
 
-## Architecture Flow
+- recursive `.v` and `.sv` file discovery
+- hidden-file/folder filtering (dot-path + Windows hidden attribute)
+- parser backends:
+  - `pyverilog` (AST-based, richer structure)
+  - `simple` (regex fallback)
+- normalized data model for:
+  - source files
+  - modules
+  - ports
+  - signals
+  - instances
+  - pin-level mappings
+- top-module inference and hierarchy tree generation
+- connectivity graph generation with directed edges
+- compact graph edge aggregation (reduce edge clutter)
+- JSON export of full parsed project
+- FastAPI service layer + REST endpoints
+- browser UI with graph rendering, drill-down, and inspector
 
-1. **Scanner** (`app/scanner.py`)
-   - recursive walk
-   - hidden file/folder filtering (dotfiles + Windows hidden attribute)
-   - deterministic sorted output
+## How The Pipeline Works
 
-2. **Parser** (`app/pyverilog_parser.py` or `app/simple_parser.py`)
-   - extracts modules, ports, signals, instances
-   - captures pin-level mappings (`child_port -> parent_signal`)
+### 1) Scanner (`app/scanner.py`)
 
-3. **Service Layer** (`app/project_service.py`)
-   - `load_project(folder)`
-   - `get_top_candidates()`
-   - `get_hierarchy_tree(top_module)`
-   - `get_module_graph(module_name)`
-   - `get_project()`, `get_module()`, `get_module_names()`
+Input: root folder path
 
-4. **Hierarchy + Graph**
-   - top inference + hierarchy tree (`app/hierarchy.py`)
-   - stable graph build (`app/graph_builder.py`)
+Output: deterministic sorted file list of Verilog/SystemVerilog files
 
-5. **Delivery**
-   - CLI summary/output (`app/main.py`)
-   - API endpoints + UI (`app/api.py`, `ui/`)
+What it does:
 
-## Output Types
+- recursively walks folders
+- ignores hidden files/folders
+- keeps only `.v` and `.sv`
 
-Project model JSON (`--out`):
+### 2) Parser Backend (`app/pyverilog_parser.py` or `app/simple_parser.py`)
 
-- `root_path`
-- `source_files`
-- `modules`
+Input: file path list
 
-Graph JSON (`--graph` or `/api/project/graph/{module}`):
+Output: `Project` dataclass instance
 
-- `schema_version`
-- `top_module`
-- `nodes` (`module`, `instance`, `port`, `net`)
-- `edges` (`hierarchy`, `signal`)
+What it extracts (MVP scope):
+
+- module definitions
+- module ports and directions
+- signals/nets (backend-dependent detail)
+- instances (`child_module instance_name`)
+- named pin mappings (`.child_port(parent_signal)`)
+
+### 3) Service Layer (`app/project_service.py`)
+
+This is the backend orchestration layer used by CLI and API.
+
+Key methods:
+
+- `load_project(folder)`
+- `get_top_candidates(include_testbenches=False)`
+- `get_hierarchy_tree(top_module)`
+- `get_module_connectivity_graph(module_name, mode, aggregate_edges)`
+- `get_module_graph(module_name)` (legacy hierarchy graph route)
+- `get_project()`, `get_module()`, `get_module_names()`
+
+### 4) Graph Builder (`app/graph_builder.py`)
+
+Generates graph JSON for visualization.
+
+Connectivity graph modes:
+
+- `compact`: endpoint-to-endpoint connections
+- `detailed`: explicit `net` nodes in between endpoints
+
+Directed-flow behavior:
+
+- uses port direction and instance pin direction when available
+- marks uncertain links as `flow = "unknown"`
+
+Compact aggregation:
+
+- optional collapse of parallel edges by `(source, target, flow)`
+- keeps metadata:
+  - `nets`
+  - `net_count`
+  - `connections`
+
+### 5) Delivery Surfaces
+
+- CLI (`app/main.py`) for project scan summaries and JSON export
+- API (`app/api.py`) for UI and automation
+- UI (`ui/`) with Cytoscape graph rendering and hierarchy navigation
+
+## Data Model (MVP)
+
+Defined in `app/models.py`.
+
+- `SourceFile(path)`
+- `Port(name, direction, width=None)`
+- `Signal(name, width=None, kind="wire")`
+- `PinConnection(child_port, parent_signal)`
+- `Instance(name, module_name, connections, pin_connections)`
+- `ModuleDef(name, ports, signals, instances, source_file)`
+- `Project(root_path, source_files, modules)`
+
+This model is intentionally simple but stable enough to support parser evolution and future UI features.
 
 ## CLI Usage
 
-From repo root, replace `C:\path\to\your\verilog-project` with your folder.
+From repository root, replace `C:\path\to\your\verilog-project` with your folder.
 
 ```bash
 python -m app.main scan "C:\path\to\your\verilog-project"
 ```
+
+Choose parser backend:
 
 ```bash
 python -m app.main scan "C:\path\to\your\verilog-project" --parser pyverilog
 python -m app.main scan "C:\path\to\your\verilog-project" --parser simple
 ```
 
+Write parsed project JSON:
+
 ```bash
 python -m app.main scan "C:\path\to\your\verilog-project" --parser pyverilog --out out/project.json
 ```
+
+Print hierarchy graph JSON (legacy graph builder output):
 
 ```bash
 python -m app.main scan "C:\path\to\your\verilog-project" --parser pyverilog --graph
 ```
 
-## API + UI Viewer
+## API + UI
 
 Install runtime dependencies:
 
@@ -99,21 +166,12 @@ Run server:
 python -m uvicorn app.api:app --reload
 ```
 
-Open UI:
+Open:
 
-- `http://127.0.0.1:8000/`
+- UI: `http://127.0.0.1:8000/`
+- API docs: `http://127.0.0.1:8000/docs`
 
-UI viewer features (steps 3 and 4):
-
-- top toolbar for folder + parser selection
-- hierarchy navigation panel with top candidates and tree view
-- breadcrumb trail (`Top > Instance > Submodule` path)
-- interactive Cytoscape graph viewer
-- zoom/pan and fit-to-screen
-- node selection and hover labels
-- inspector panel for loaded-project and selected-node details
-
-Current API endpoints:
+## Main API Endpoints
 
 - `GET /api/health`
 - `POST /api/project/load`
@@ -123,47 +181,81 @@ Current API endpoints:
 - `GET /api/project/modules/{module_name}`
 - `GET /api/project/hierarchy/{top_module}`
 - `GET /api/project/graph/{module_name}`
+- `GET /api/project/connectivity/{module_name}?mode=compact|detailed&aggregate_edges=true|false`
+
+## UI Behavior (Current MVP)
+
+Left panel:
+
+- top module candidates
+- hierarchy tree navigation
+
+Center panel:
+
+- graph mode selector (`compact` or `detailed`)
+- aggregate toggle
+- show-unknown toggle
+- directed graph view with fit-to-screen
+
+Graph interaction:
+
+- select node/edge for inspector details
+- hover tooltips
+- double-click instance node to drill into child module
+- breadcrumb path updates during drill-down
+
+Right panel:
+
+- loaded project summary
+- current graph settings
+- selected item details
+- legend for node and edge types
 
 ## Testing
 
-Run full test suite:
+Run all tests:
 
 ```bash
 python -m unittest discover -s tests -p "test_*.py"
 ```
 
+Quick syntax checks used in development:
+
+```bash
+python -m py_compile app/graph_builder.py app/api.py app/project_service.py
+node --check ui/app.js
+```
+
 ## Repository Layout
 
-- `app/main.py` - CLI entry point
-- `app/api.py` - FastAPI endpoints + UI serving
-- `app/project_service.py` - backend orchestration API
-- `app/scanner.py` - source discovery
-- `app/models.py` - dataclasses
-- `app/parser_base.py` - parser interface
-- `app/pyverilog_parser.py` - AST parser backend
-- `app/simple_parser.py` - regex parser backend
-- `app/hierarchy.py` - top inference + hierarchy tree
-- `app/graph_builder.py` - stable graph schema builder
-- `app/json_exporter.py` - model JSON export
-- `ui/` - viewer assets (`index.html`, `styles.css`, `app.js`)
-- `tests/` - unit tests
-- `out/` - generated model outputs
-- `artifacts/` - scan summaries/debug artifacts
+- `app/main.py`: CLI entry point
+- `app/api.py`: FastAPI routes + UI serving
+- `app/project_service.py`: orchestration service
+- `app/scanner.py`: file discovery
+- `app/models.py`: core dataclasses
+- `app/parser_base.py`: parser backend interface
+- `app/pyverilog_parser.py`: AST parser backend
+- `app/simple_parser.py`: regex parser backend
+- `app/hierarchy.py`: top inference + hierarchy tree
+- `app/graph_builder.py`: graph JSON builders
+- `app/json_exporter.py`: project JSON export
+- `ui/index.html`, `ui/styles.css`, `ui/app.js`: UI client
+- `tests/`: unit tests
+- `out/`: generated output files
+- `artifacts/`: debug logs and summaries
 
 ## Known Limitations
 
-- not a full language elaborator yet
-- some advanced SV constructs are not fully modeled
-- top inference is heuristic
-- graph layout is MVP-level and can be improved for very large designs
-- Cytoscape is loaded from CDN in the current UI shell
+- this is not a full elaborating Verilog compiler
+- parser coverage for advanced SystemVerilog remains incomplete
+- unknown-direction edges can still appear when direction inference is missing
+- very large modules can still be visually dense without additional filtering
+- UI currently runs in browser (packaging into desktop executable is a future step)
 
 ## Generated Files
 
-Do not commit generated parser/cache artifacts:
+Do not commit generated parser/cache artifacts.
 
 - `parsetab.py`
 - `parser.out`
 - `__pycache__/`
-
-`.gitignore` includes these patterns.

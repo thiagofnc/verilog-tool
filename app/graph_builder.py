@@ -73,10 +73,52 @@ def _instance_pin_pairs(instance: Instance) -> list[tuple[str, str]]:
     return cleaned
 
 
+def _aggregate_compact_edges(edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse parallel compact edges by source/target/flow for cleaner layouts."""
+    grouped: dict[tuple[str, str, str], dict[str, Any]] = {}
+
+    for edge in edges:
+        key = (edge["source"], edge["target"], edge.get("flow", "directed"))
+        group = grouped.get(key)
+        if group is None:
+            group = {
+                "source": edge["source"],
+                "target": edge["target"],
+                "kind": edge.get("kind", "connection"),
+                "flow": edge.get("flow", "directed"),
+                "nets": [],
+                "connections": [],
+            }
+            grouped[key] = group
+
+        net_name = edge.get("net", "")
+        if net_name and net_name not in group["nets"]:
+            group["nets"].append(net_name)
+
+        group["connections"].append(
+            {
+                "net": net_name,
+                "source_port": edge.get("source_port", ""),
+                "target_port": edge.get("target_port", ""),
+            }
+        )
+
+    aggregated: list[dict[str, Any]] = []
+    for group in grouped.values():
+        group["net_count"] = len(group["nets"])
+        if group["net_count"] == 1:
+            group["net"] = group["nets"][0]
+        aggregated.append(group)
+
+    aggregated.sort(key=lambda edge: (edge["source"], edge["target"], edge.get("flow", "")))
+    return aggregated
+
+
 def build_module_connectivity_graph(
     project: Project,
     module_name: str,
     mode: str = "compact",
+    aggregate_edges: bool = False,
 ) -> dict[str, Any]:
     """Build a module-scope connectivity graph from shared parent signals.
 
@@ -277,7 +319,7 @@ def build_module_connectivity_graph(
         "top_module": module_name,
         "focus_module": module_name,
         "nodes": nodes,
-        "edges": edges,
+        "edges": _aggregate_compact_edges(edges) if mode == "compact" and aggregate_edges else edges,
     }
 
 

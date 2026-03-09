@@ -294,6 +294,44 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.canvas-actions select {
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font-size: 0.78rem;
+}
+
+.mini-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.mini-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #0f1a21;
+}
+
+.mini-check input {
+  margin: 0;
+  accent-color: var(--accent);
 }
 
 #graphTag {
@@ -533,4 +571,5 @@ body {
     max-height: 24vh;
   }
 }
+
 

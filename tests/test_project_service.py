@@ -1,4 +1,4 @@
-import unittest
+﻿import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -58,6 +58,9 @@ endmodule
             self.assertIn("instance:u1", node_ids)
             self.assertIn("io:clk", node_ids)
 
+            aggregated_graph = service.get_module_connectivity_graph("top", mode="compact", aggregate_edges=True)
+            self.assertTrue(all("net_count" in edge for edge in aggregated_graph["edges"]))
+
             with self.assertRaises(ValueError):
                 service.get_hierarchy_tree("missing_module")
 
@@ -79,3 +82,4 @@ endmodule
 
 if __name__ == "__main__":
     unittest.main()
+
