@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>rtl_arch_visualizer UI</title>
+    <link rel="stylesheet" href="/ui/styles.css" />
+    <script src="/ui/app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark"></div>
+          <div>
+            <h1>RTL Architecture Visualizer</h1>
+            <p>EDA-style project explorer (MVP shell)</p>
+          </div>
+        </div>
+
+        <div class="controls">
+          <input
+            id="folderInput"
+            type="text"
+            placeholder="C:\\path\\to\\your\\verilog-project"
+            autocomplete="off"
+          />
+
+          <select id="parserSelect" aria-label="Parser backend">
+            <option value="pyverilog">pyverilog</option>
+            <option value="simple">simple</option>
+          </select>
+
+          <button id="loadBtn" type="button">Load Project</button>
+          <button id="refreshBtn" type="button">Refresh</button>
+
+          <span id="statusBadge" class="status idle">Idle</span>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="panel panel-left">
+          <h2>Hierarchy</h2>
+
+          <section class="panel-section">
+            <h3>Top Candidates</h3>
+            <ul id="topList" class="item-list"></ul>
+          </section>
+
+          <section class="panel-section">
+            <h3>All Modules</h3>
+            <ul id="moduleList" class="item-list"></ul>
+          </section>
+        </aside>
+
+        <section class="panel panel-center">
+          <div class="canvas-header">
+            <h2>Graph Workspace</h2>
+            <span id="graphTag">No graph loaded</span>
+          </div>
+
+          <div id="graphStats" class="graph-stats empty">
+            <p>Load a module graph to see a node/edge breakdown.</p>
+          </div>
+
+          <div id="graphCanvas" class="graph-canvas">
+            <div class="graph-placeholder">
+              <h3>Graph Render Area</h3>
+              <p>This shell is ready for Cytoscape/ELK in the next step.</p>
+            </div>
+          </div>
+
+          <pre id="graphPreview" class="graph-preview"></pre>
+        </section>
+
+        <aside class="panel panel-right">
+          <h2>Inspector</h2>
+          <div id="inspector" class="inspector">
+            <p>Load a project to inspect summary data.</p>
+          </div>
+
+          <section class="legend">
+            <h3>Node Types</h3>
+            <ul class="legend-list">
+              <li><span class="chip module"></span><strong>module</strong>: a module definition context</li>
+              <li><span class="chip instance"></span><strong>instance</strong>: one instantiated child module</li>
+              <li><span class="chip port"></span><strong>port</strong>: connection point (module or instance pin)</li>
+              <li><span class="chip net"></span><strong>net</strong>: signal wire/name in a module scope</li>
+            </ul>
+
+            <h3>Edge Types</h3>
+            <ul class="legend-list">
+              <li><span class="chip hierarchy"></span><strong>hierarchy</strong>: ownership/containment</li>
+              <li><span class="chip signal"></span><strong>signal</strong>: wiring relationship</li>
+            </ul>
+
+            <p class="legend-note">
+              Node count is the total of all node kinds. It is usually much larger than instance count.
+            </p>
+          </section>
+        </aside>
+      </main>
+    </div>
+  </body>
+</html>

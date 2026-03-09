@@ -1,0 +1,87 @@
+"""Service layer for loading and querying parsed Verilog projects."""
+
+from typing import Any
+
+try:
+    from app.graph_builder import build_hierarchy_graph
+    from app.hierarchy import infer_top_modules
+    from app.models import ModuleDef, Project
+    from app.scanner import scan_verilog_files
+    from app.simple_parser import SimpleRegexParser
+except ImportError:  # Supports running as: python app/main.py
+    from graph_builder import build_hierarchy_graph
+    from hierarchy import infer_top_modules
+    from models import ModuleDef, Project
+    from scanner import scan_verilog_files
+    from simple_parser import SimpleRegexParser
+
+
+PARSER_CHOICES = ("pyverilog", "simple")
+
+
+def create_parser_backend(parser_backend: str):
+    """Build the parser backend requested by the caller."""
+    if parser_backend == "simple":
+        return SimpleRegexParser()
+
+    if parser_backend != "pyverilog":
+        raise ValueError(f"Unsupported parser backend: {parser_backend}")
+
+    try:
+        from app.pyverilog_parser import PyVerilogParser
+    except ImportError:
+        from pyverilog_parser import PyVerilogParser  # type: ignore
+
+    return PyVerilogParser()
+
+
+class ProjectService:
+    """Thin orchestration layer used by CLI today and UI/API later."""
+
+    def __init__(self, parser_backend: str = "pyverilog") -> None:
+        if parser_backend not in PARSER_CHOICES:
+            raise ValueError(f"Unsupported parser backend: {parser_backend}")
+
+        self.parser_backend = parser_backend
+        self.project: Project | None = None
+
+    def load_project(self, folder: str) -> Project:
+        """Scan + parse a project folder and cache the resulting Project."""
+        parser = create_parser_backend(self.parser_backend)
+        file_paths = scan_verilog_files(folder)
+        self.project = parser.parse_files(file_paths)
+        return self.project
+
+    def get_project(self) -> Project:
+        """Return the loaded project, raising if load_project has not run yet."""
+        return self._require_project()
+
+    def get_top_candidates(self, include_testbenches: bool = False) -> list[str]:
+        """Return inferred top modules from the currently loaded project."""
+        project = self._require_project()
+        return infer_top_modules(project.modules, include_testbenches=include_testbenches)
+
+    def get_module_names(self) -> list[str]:
+        """Return sorted module names from the loaded project."""
+        project = self._require_project()
+        names = {module.name for module in project.modules}
+        return sorted(names)
+
+    def get_module(self, module_name: str) -> ModuleDef:
+        """Return one module definition by name."""
+        project = self._require_project()
+        for module in project.modules:
+            if module.name == module_name:
+                return module
+        raise ValueError(f"Module not found in loaded project: {module_name}")
+
+    def get_module_graph(self, module_name: str) -> dict[str, Any]:
+        """Build graph JSON for a selected module in the loaded project."""
+        project = self._require_project()
+        self.get_module(module_name)
+        return build_hierarchy_graph(project, module_name)
+
+    def _require_project(self) -> Project:
+        if self.project is None:
+            raise RuntimeError("No project loaded. Call load_project(folder) first.")
+        return self.project

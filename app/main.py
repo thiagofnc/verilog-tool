@@ -1,25 +1,18 @@
-﻿"""CLI entry point for rtl_arch_visualizer."""
+"""CLI entry point for rtl_arch_visualizer."""
 
 import argparse
 import json
 
 try:
-    from app.graph_builder import build_hierarchy_graph
-    from app.hierarchy import build_hierarchy_tree, infer_top_modules
+    from app.hierarchy import build_hierarchy_tree
     from app.json_exporter import save_project_json
     from app.models import ModuleDef
-    from app.scanner import scan_verilog_files
-    from app.simple_parser import SimpleRegexParser
+    from app.project_service import PARSER_CHOICES, ProjectService
 except ImportError:  # Supports running as: python app/main.py
-    from graph_builder import build_hierarchy_graph
-    from hierarchy import build_hierarchy_tree, infer_top_modules
+    from hierarchy import build_hierarchy_tree
     from json_exporter import save_project_json
     from models import ModuleDef
-    from scanner import scan_verilog_files
-    from simple_parser import SimpleRegexParser
-
-
-PARSER_CHOICES = ("pyverilog", "simple")
+    from project_service import PARSER_CHOICES, ProjectService
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -61,18 +54,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _create_parser_backend(parser_backend: str):
-    if parser_backend == "simple":
-        return SimpleRegexParser()
-
-    try:
-        from app.pyverilog_parser import PyVerilogParser
-    except ImportError:
-        from pyverilog_parser import PyVerilogParser  # type: ignore
-
-    return PyVerilogParser()
-
-
 def _print_module_details(module: ModuleDef) -> None:
     print(f"  - {module.name}")
 
@@ -85,18 +66,15 @@ def _print_module_details(module: ModuleDef) -> None:
         print(f"        - {instance.name} ({instance.module_name})")
 
 
-def _print_possible_tops(modules: list[ModuleDef]) -> list[str]:
-    top_modules = infer_top_modules(modules)
+def _print_possible_tops(top_modules: list[str]) -> None:
     print("Possible top modules (testbench-filtered):")
 
     if not top_modules:
         print("  (none)")
-        return top_modules
+        return
 
     for module_name in top_modules:
         print(f"  - {module_name}")
-
-    return top_modules
 
 
 def run_scan(
@@ -106,20 +84,18 @@ def run_scan(
     print_graph: bool = False,
 ) -> int:
     """Scan files, parse project, and print a readable summary."""
-    file_paths = scan_verilog_files(root_path)
+    service = ProjectService(parser_backend=parser_backend)
 
     try:
-        parser = _create_parser_backend(parser_backend)
+        project = service.load_project(root_path)
     except Exception as exc:
-        print(f"Failed to initialize parser backend '{parser_backend}': {exc}")
+        print(f"Failed to load project with backend '{parser_backend}': {exc}")
         print("Tip: install dependencies for pyverilog or use --parser simple")
         return 2
 
-    project = parser.parse_files(file_paths)
-
     print("Scan Summary")
     print(f"Parser backend: {parser_backend}")
-    print(f"Files found: {len(file_paths)}")
+    print(f"Files found: {len(project.source_files)}")
     print(f"Modules found: {len(project.modules)}")
     print("Modules:")
 
@@ -129,7 +105,8 @@ def run_scan(
         for module in project.modules:
             _print_module_details(module)
 
-    top_modules = _print_possible_tops(project.modules)
+    top_modules = service.get_top_candidates()
+    _print_possible_tops(top_modules)
 
     if len(top_modules) == 1:
         chosen_top = top_modules[0]
@@ -138,7 +115,7 @@ def run_scan(
         print(json.dumps(hierarchy_tree, indent=2))
 
         if print_graph:
-            graph = build_hierarchy_graph(project, chosen_top)
+            graph = service.get_module_graph(chosen_top)
             print(f"Graph JSON ({chosen_top}):")
             print(json.dumps(graph, indent=2))
     elif print_graph:
