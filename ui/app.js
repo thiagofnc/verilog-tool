@@ -370,7 +370,7 @@ function ensureCytoscape() {
         style: {
           shape: "round-rectangle",
           width: "mapData(port_count, 0, 40, 180, 320)",
-          height: "mapData(port_count, 0, 40, 90, 260)",
+          height: "mapData(max_side_port_count, 0, 24, 90, 320)",
           "background-color": "#142c3f",
           "border-width": 2.4,
           "border-color": "#78b8e8",
@@ -699,12 +699,35 @@ function buildCyElements(graph) {
 
 function buildPortViewCyElements(graph) {
   const elements = [];
+  const sideCountsByInstance = new Map();
 
   for (const node of graph.nodes || []) {
+    if (node.kind === "instance_port" && node.instance_node_id) {
+      const counts = sideCountsByInstance.get(node.instance_node_id) || { input: 0, output: 0, unknown: 0 };
+      const direction = String(node.direction || "unknown").toLowerCase();
+      if (direction === "output") {
+        counts.output += 1;
+      } else if (direction === "input") {
+        counts.input += 1;
+      } else {
+        counts.unknown += 1;
+      }
+      sideCountsByInstance.set(node.instance_node_id, counts);
+    }
+  }
+
+  for (const node of graph.nodes || []) {
+    const sideCounts = node.kind === "instance" ? sideCountsByInstance.get(node.id) : null;
+    const maxSidePortCount = sideCounts
+      ? Math.max(sideCounts.input, sideCounts.output, sideCounts.unknown)
+      : 0;
+
     elements.push({
       data: {
         ...node,
         is_bus: node.is_bus ? 1 : 0,
+        port_view: 1,
+        max_side_port_count: maxSidePortCount,
       },
     });
   }
@@ -1692,4 +1715,5 @@ renderInspector();
     setStatus("API unavailable", "error");
   }
 })();
+
 

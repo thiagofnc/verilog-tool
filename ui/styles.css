@@ -66,20 +66,20 @@ body {
   width: 14px;
   height: 42px;
   border-radius: 6px;
-  background: linear-gradient(180deg, var(--accent), #148f6a);
-  box-shadow: 0 0 14px rgba(32, 201, 151, 0.35);
+  background: linear-gradient(180deg, #ffd84d, #ff9f1c);
+  box-shadow: 0 0 14px rgba(255, 216, 77, 0.4);
 }
 
 .brand h1 {
   margin: 0;
   font-size: 1.05rem;
   letter-spacing: 0.03em;
-  color: #ff4d4d;
+  color: #ffd84d;
 }
 
 .brand p {
   margin: 2px 0 0;
-  color: #ff8a8a;
+  color: #ffcf70;
   font-size: 0.82rem;
 }
 
@@ -599,4 +599,5 @@ body {
     max-height: 24vh;
   }
 }
+
 
