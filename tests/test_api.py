@@ -108,6 +108,12 @@ endmodule
             self.assertTrue(port_view_graph["port_view"])
             self.assertTrue(any(node.get("kind") == "instance_port" for node in port_view_graph["nodes"]))
 
+            schematic_response = self.client.get("/api/project/connectivity/top?schematic=true&schematic_mode=full")
+            self.assertEqual(schematic_response.status_code, 200)
+            schematic_graph = schematic_response.json()
+            self.assertEqual(schematic_graph["view"], "schematic")
+            self.assertEqual(schematic_graph["layout"]["engine"], "schematic-v2")
+
     def test_root_serves_ui_shell(self) -> None:
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
