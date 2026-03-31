@@ -4,12 +4,14 @@ from typing import Any
 
 try:
     from app.graph_builder import build_hierarchy_graph, build_module_connectivity_graph
+    from app.schematic_layout import build_schematic_connectivity_graph
     from app.hierarchy import build_hierarchy_tree, infer_top_modules
     from app.models import ModuleDef, Project
     from app.scanner import scan_verilog_files
     from app.simple_parser import SimpleRegexParser
 except ImportError:  # Supports running as: python app/main.py
     from graph_builder import build_hierarchy_graph, build_module_connectivity_graph
+    from schematic_layout import build_schematic_connectivity_graph
     from hierarchy import build_hierarchy_tree, infer_top_modules
     from models import ModuleDef, Project
     from scanner import scan_verilog_files
@@ -93,10 +95,14 @@ class ProjectService:
         mode: str = "compact",
         aggregate_edges: bool = False,
         port_view: bool = False,
+        schematic: bool = False,
+        schematic_mode: str = "full",
     ) -> dict[str, Any]:
         """Build connectivity graph JSON for one module scope."""
         project = self._require_project()
         self.get_module(module_name)
+        if schematic:
+            return build_schematic_connectivity_graph(project, module_name, schematic_mode=schematic_mode)
         return build_module_connectivity_graph(
             project,
             module_name,

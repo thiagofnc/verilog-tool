@@ -16,6 +16,7 @@
   aggregateEdges: true,
   showUnknownEdges: false,
   portView: true,
+  schematicMode: "full",
   lastTapNodeId: null,
   lastTapTs: 0,
 };
@@ -29,6 +30,7 @@ const graphModeSelect = document.getElementById("graphModeSelect");
 const aggregateToggle = document.getElementById("aggregateToggle");
 const showUnknownToggle = document.getElementById("showUnknownToggle");
 const portViewToggle = document.getElementById("portViewToggle");
+const schematicModeSelect = document.getElementById("schematicModeSelect");
 const statusBadge = document.getElementById("statusBadge");
 const topList = document.getElementById("topList");
 const hierarchyTree = document.getElementById("hierarchyTree");
@@ -39,6 +41,7 @@ const graphPreview = document.getElementById("graphPreview");
 const graphCanvas = document.getElementById("graphCanvas");
 const graphEmpty = document.getElementById("graphEmpty");
 const cyGraph = document.getElementById("cyGraph");
+const schematicLayer = document.getElementById("schematicLayer");
 const hoverTooltip = document.getElementById("hoverTooltip");
 const inspector = document.getElementById("inspector");
 
@@ -47,6 +50,20 @@ const API_BASE = window.location.protocol === "file:" ? "http://127.0.0.1:8000" 
 if (typeof cytoscape === "function" && typeof cytoscapeElk === "function") {
   cytoscape.use(cytoscapeElk);
 }
+
+const LAYOUT_GRID = 20;
+const INSTANCE_COLUMN_START = 420;
+const INSTANCE_COLUMN_STEP = 340;
+const INSTANCE_ROW_GAP = 180;
+const INSTANCE_ROW_GAP_DENSE = 140;
+const IO_COLUMN_MARGIN = 260;
+const IO_ROW_GAP = 60;
+const PORT_ROW_GAP = 20;
+const PORT_SIDE_INSET = 12;
+const ROUTE_LANE_GAP = 28;
+const ROUTE_FANOUT_GAP = 10;
+const ROUTE_PARALLEL_GAP = 6;
+const PORT_STUB_LENGTH = 26;
 
 function setStatus(text, kind) {
   if (!statusBadge) {
@@ -63,6 +80,14 @@ function escapeHtml(text) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function snapToGrid(value, grid = LAYOUT_GRID) {
+  return Math.round(value / grid) * grid;
+}
+
+function naturalCompare(left, right) {
+  return String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: "base" });
 }
 
 async function apiRequest(path, options = {}) {
@@ -123,11 +148,12 @@ function enforcePortViewMode() {
 
     graphModeSelect.value = "compact";
     graphModeSelect.disabled = true;
-    graphModeSelect.title = "Port view uses compact mode";
+    graphModeSelect.title = "Schematic view uses compact connectivity as its source graph";
 
     aggregateToggle.checked = true;
     aggregateToggle.disabled = true;
-    aggregateToggle.title = "Port view uses aggregated edges";
+    aggregateToggle.title = "Schematic view bundles edges internally";
+    schematicModeSelect.disabled = false;
     return;
   }
 
@@ -135,10 +161,15 @@ function enforcePortViewMode() {
   graphModeSelect.title = "";
   aggregateToggle.disabled = false;
   aggregateToggle.title = "";
+  schematicModeSelect.disabled = true;
 }
 
 function getEffectiveGraphMode() {
   return state.portView ? "compact" : state.graphMode;
+}
+
+function escapeAttr(text) {
+  return escapeHtml(text).replaceAll("`", "&#96;");
 }
 
 function getEffectiveAggregateEdges() {
@@ -390,8 +421,8 @@ function ensureCytoscape() {
         selector: 'node[kind = "instance"][port_view = 1]',
         style: {
           shape: "round-rectangle",
-          width: "mapData(port_count, 0, 40, 180, 320)",
-          height: "mapData(max_side_port_count, 0, 24, 90, 320)",
+          width: "data(layout_width)",
+          height: "data(layout_height)",
           "background-color": "#142c3f",
           "border-width": 2.4,
           "border-color": "#78b8e8",
@@ -485,6 +516,27 @@ function ensureCytoscape() {
         },
       },
       {
+        selector: 'node[kind = "route_anchor"][route_role = "lane_entry"], node[kind = "route_anchor"][route_role = "lane_exit"]',
+        style: {
+          width: 6,
+          height: 6,
+          opacity: 0.95,
+          "background-color": "#f4fbff",
+          "border-width": 1.4,
+          "border-color": "#0d1820",
+        },
+      },
+      {
+        selector: 'node[kind = "port_stub_anchor"]',
+        style: {
+          width: 1,
+          height: 1,
+          opacity: 0,
+          events: "no",
+          label: "",
+        },
+      },
+      {
         selector: "node[is_bus = 1]",
         style: {
           "border-width": 2.5,
@@ -516,9 +568,33 @@ function ensureCytoscape() {
           "curve-style": "bezier",
           "control-point-step-size": 40,
           "arrow-scale": 0.65,
-          "line-opacity": 0.88,
+          "line-opacity": 0.92,
+          "line-cap": "round",
           "source-endpoint": "outside-to-line",
           "target-endpoint": "outside-to-line",
+        },
+      },
+      {
+        selector: 'edge[route_segment = 1]',
+        style: {
+          "target-arrow-shape": "none",
+          "source-arrow-shape": "none",
+        },
+      },
+      {
+        selector: 'edge[port_stub = 1]',
+        style: {
+          "curve-style": "straight",
+          "target-arrow-shape": "none",
+          "source-arrow-shape": "none",
+          "line-cap": "round",
+          "line-opacity": 0.95,
+        },
+      },
+      {
+        selector: 'edge[route_segment = 1][segment_role = "target"]',
+        style: {
+          "target-arrow-shape": "triangle",
         },
       },
       {
@@ -709,6 +785,13 @@ function buildCyElements(graph) {
 function buildPortViewCyElements(graph) {
   const elements = [];
   const sideCountsByInstance = new Map();
+  const connectionCounts = new Map();
+  const longestPortNameByInstance = new Map();
+
+  (graph.edges || []).forEach((edge) => {
+    connectionCounts.set(edge.source, (connectionCounts.get(edge.source) || 0) + 1);
+    connectionCounts.set(edge.target, (connectionCounts.get(edge.target) || 0) + 1);
+  });
 
   for (const node of graph.nodes || []) {
     if (node.kind === "instance_port" && node.instance_node_id) {
@@ -722,6 +805,10 @@ function buildPortViewCyElements(graph) {
         counts.unknown += 1;
       }
       sideCountsByInstance.set(node.instance_node_id, counts);
+      longestPortNameByInstance.set(
+        node.instance_node_id,
+        Math.max(longestPortNameByInstance.get(node.instance_node_id) || 0, String(node.port_name || "").length)
+      );
     }
   }
 
@@ -730,6 +817,13 @@ function buildPortViewCyElements(graph) {
     const maxSidePortCount = sideCounts
       ? Math.max(sideCounts.input, sideCounts.output, sideCounts.unknown)
       : 0;
+    const longestPortName = node.kind === "instance" ? longestPortNameByInstance.get(node.id) || 0 : 0;
+    const layoutWidth = node.kind === "instance"
+      ? Math.max(220, Math.min(420, 190 + longestPortName * 7))
+      : undefined;
+    const layoutHeight = node.kind === "instance"
+      ? Math.max(104, 56 + maxSidePortCount * 22)
+      : undefined;
 
     elements.push({
       data: {
@@ -737,9 +831,52 @@ function buildPortViewCyElements(graph) {
         is_bus: node.is_bus ? 1 : 0,
         port_view: 1,
         max_side_port_count: maxSidePortCount,
+        connection_count: connectionCounts.get(node.id) || 0,
+        ...(layoutWidth ? { layout_width: layoutWidth } : {}),
+        ...(layoutHeight ? { layout_height: layoutHeight } : {}),
       },
     });
   }
+
+  const portStubNodes = (graph.nodes || []).filter((node) => {
+    if (!["instance_port", "module_io"].includes(node.kind)) {
+      return false;
+    }
+    return (connectionCounts.get(node.id) || 0) === 0;
+  });
+
+  portStubNodes.forEach((node, index) => {
+    const stubId = `stub:${node.id}:${index}`;
+    elements.push({
+      data: {
+        id: `${stubId}:anchor`,
+        label: "",
+        kind: "port_stub_anchor",
+        stub_for: node.id,
+        direction: String(node.direction || "unknown").toLowerCase(),
+        port_name: node.port_name || node.label || "",
+        sig_class: node.sig_class || (node.is_bus ? "bus" : "wire"),
+        is_bus: node.is_bus ? 1 : 0,
+        port_view: 1,
+      },
+    });
+    elements.push({
+      data: {
+        id: `${stubId}:edge`,
+        source: node.id,
+        target: `${stubId}:anchor`,
+        kind: "connection",
+        port_stub: 1,
+        port_view: 1,
+        sig_class: node.sig_class || (node.is_bus ? "bus" : "wire"),
+        is_bus: node.is_bus ? 1 : 0,
+        flow: "stub",
+        signal_name: node.port_name || node.label || "",
+        source_port: node.port_name || node.label || "",
+        target_port: node.port_name || node.label || "",
+      },
+    });
+  });
 
   (graph.edges || []).forEach((edge, index) => {
     elements.push({
@@ -904,14 +1041,44 @@ function getAverageConnectedY(nodeId, graph, resolveToInstance = false) {
   return ys.reduce((sum, value) => sum + value, 0) / ys.length;
 }
 
-function spreadNodesVertically(nodes, minGap = 28) {
+function getNodeHalfSize(node) {
+  return {
+    halfWidth: Math.max(12, node.outerWidth() / 2),
+    halfHeight: Math.max(12, node.outerHeight() / 2),
+  };
+}
+
+function stackNodesVertically(nodes, centerY, minGap = 28) {
+  const ordered = [...nodes].filter((node) => node && !node.empty());
+  if (!ordered.length) {
+    return;
+  }
+
+  const totalHeight = ordered.reduce((sum, node) => sum + getNodeHalfSize(node).halfHeight * 2, 0)
+    + Math.max(0, ordered.length - 1) * minGap;
+
+  let cursorY = centerY - totalHeight / 2;
+  ordered.forEach((node) => {
+    const { halfHeight } = getNodeHalfSize(node);
+    cursorY += halfHeight;
+    node.position({ x: node.position("x"), y: cursorY });
+    cursorY += halfHeight + minGap;
+  });
+}
+
+function spreadNodesVertically(nodes, minGap = 28, anchorY = null) {
   const ordered = [...nodes]
     .filter((node) => node && !node.empty())
     .sort((left, right) => left.position("y") - right.position("y"));
 
+  if (anchorY !== null) {
+    stackNodesVertically(ordered, anchorY, minGap);
+    return;
+  }
+
   let lastBottom = null;
   for (const node of ordered) {
-    const halfHeight = Math.max(14, node.outerHeight() / 2);
+    const { halfHeight } = getNodeHalfSize(node);
     let centerY = node.position("y");
     const topY = centerY - halfHeight;
 
@@ -922,6 +1089,20 @@ function spreadNodesVertically(nodes, minGap = 28) {
 
     lastBottom = centerY + halfHeight;
   }
+}
+
+function distributeColumns(columnEntries, startX, minGap = 170) {
+  let nextLeft = startX;
+
+  columnEntries.forEach((entry) => {
+    const widths = entry.nodes.map((node) => node.outerWidth());
+    const columnWidth = widths.length ? Math.max(...widths) : 0;
+    const centerX = nextLeft + columnWidth / 2;
+    entry.nodes.forEach((node) => {
+      node.position({ x: centerX, y: node.position("y") });
+    });
+    nextLeft += columnWidth + minGap;
+  });
 }
 
 function orderInstancesWithinLevels(graph, groupedByLevel, levelByInstance) {
@@ -1056,7 +1237,7 @@ function placeInstancePortNodes(graph) {
     if (leftY === null && rightY !== null) {
       return 1;
     }
-    return String(left.data("port_name") || left.id()).localeCompare(String(right.data("port_name") || right.id()));
+    return naturalCompare(left.data("port_name") || left.id(), right.data("port_name") || right.id());
   });
 
   grouped.forEach((ports, parentId) => {
@@ -1087,17 +1268,55 @@ function placeInstancePortNodes(graph) {
       }
 
       const ordered = sortPorts(sidePorts);
-      const step = Math.max(18, (halfHeight * 1.75) / (ordered.length + 1));
+      const step = Math.max(PORT_ROW_GAP, snapToGrid((halfHeight * 1.75) / Math.max(1, ordered.length + 1)));
+      const totalHeight = Math.max(0, (ordered.length - 1) * step);
+      const startY = snapToGrid(center.y - totalHeight / 2);
       ordered.forEach((node, idx) => {
         node.position({
-          x: center.x + xOffset + inset,
-          y: center.y - halfHeight * 0.88 + step * (idx + 1),
+          x: snapToGrid(center.x + xOffset + inset),
+          y: startY + idx * step,
         });
       });
     };
 
-    placeSide(leftPorts, -halfWidth, 12);
-    placeSide(rightPorts, halfWidth, -12);
+    placeSide(leftPorts, -halfWidth, PORT_SIDE_INSET);
+    placeSide(rightPorts, halfWidth, -PORT_SIDE_INSET);
+  });
+}
+
+function getPortStubDirection(node) {
+  const kind = String(node.data("kind") || "");
+  const direction = String(node.data("direction") || "unknown").toLowerCase();
+
+  if (direction === "output") {
+    return 1;
+  }
+  if (direction === "input") {
+    return -1;
+  }
+  if (kind === "module_io") {
+    return node.position("x") <= (cyGraph.clientWidth || 0) / 2 ? -1 : 1;
+  }
+  return -1;
+}
+
+function placeUnconnectedPortStubs() {
+  if (!state.cy) {
+    return;
+  }
+
+  state.cy.nodes('[kind = "port_stub_anchor"]').forEach((anchor) => {
+    const portId = anchor.data("stub_for");
+    const portNode = state.cy.getElementById(portId);
+    if (!portNode || portNode.empty()) {
+      return;
+    }
+
+    const side = getPortStubDirection(portNode);
+    anchor.position({
+      x: snapToGrid(portNode.position("x") + side * PORT_STUB_LENGTH),
+      y: snapToGrid(portNode.position("y")),
+    });
   });
 }
 
@@ -1128,19 +1347,18 @@ function placeModuleIoNodes(graph, leftX, rightX) {
         if (a.y === null && b.y !== null) {
           return 1;
         }
-        return a.name.localeCompare(b.name);
+        return naturalCompare(a.name, b.name);
       });
 
-    const minGap = 52;
-    let nextY = fallbackStartY;
+    let nextY = snapToGrid(fallbackStartY);
     for (const item of enriched) {
-      let y = item.y === null ? nextY : item.y;
+      let y = item.y === null ? nextY : snapToGrid(item.y);
       if (y < nextY) {
         y = nextY;
       }
 
-      item.node.position({ x, y });
-      nextY = y + minGap;
+      item.node.position({ x: snapToGrid(x), y });
+      nextY = y + IO_ROW_GAP;
     }
   };
 
@@ -1159,13 +1377,14 @@ function placeModuleIoNodes(graph, leftX, rightX) {
     }
   });
 
-  placeList(inputNodes, leftX, 110);
-  placeList(outputNodes, rightX, 110);
-  placeList(unknownNodes, leftX, 110 + inputNodes.length * 52 + 24);
+  placeList(inputNodes, leftX, 120);
+  placeList(outputNodes, rightX, 120);
+  placeList(unknownNodes, leftX, 120 + inputNodes.length * IO_ROW_GAP + LAYOUT_GRID);
 
-  spreadNodesVertically(inputNodes, 28);
-  spreadNodesVertically(outputNodes, 28);
-  spreadNodesVertically(unknownNodes, 28);
+  const centerY = snapToGrid((cyGraph.clientHeight || 760) / 2);
+  spreadNodesVertically(inputNodes, LAYOUT_GRID, centerY);
+  spreadNodesVertically(outputNodes, LAYOUT_GRID, centerY);
+  spreadNodesVertically(unknownNodes, LAYOUT_GRID, centerY + Math.max(80, inputNodes.length * LAYOUT_GRID));
 }
 
 function placePortViewRoutes(graph) {
@@ -1190,7 +1409,7 @@ function placePortViewRoutes(graph) {
       sourcePos,
       targetPos,
       forward: sourcePos.x <= targetPos.x,
-      preferredY: (sourcePos.y + targetPos.y) / 2,
+      preferredY: snapToGrid((sourcePos.y + targetPos.y) / 2),
     };
   }).filter(Boolean);
 
@@ -1202,13 +1421,12 @@ function placePortViewRoutes(graph) {
   const minY = Math.min(...allYs);
   const maxY = Math.max(...allYs);
   const midY = (minY + maxY) / 2;
-  const laneGap = 26;
 
   const assignCenterLanes = (items) => {
-    let nextY = minY - 24;
+    let nextY = snapToGrid(minY - LAYOUT_GRID);
     for (const item of [...items].sort((left, right) => left.preferredY - right.preferredY)) {
-      item.laneY = Math.max(item.preferredY, nextY);
-      nextY = item.laneY + laneGap;
+      item.laneY = snapToGrid(Math.max(item.preferredY, nextY));
+      nextY = item.laneY + ROUTE_LANE_GAP;
     }
   };
 
@@ -1232,42 +1450,86 @@ function placePortViewRoutes(graph) {
   assignCenterLanes(forwardRoutes);
 
   [...topRoutes].sort((left, right) => left.preferredY - right.preferredY).forEach((route, idx) => {
-    route.laneY = minY - 100 - idx * laneGap;
+    route.laneY = snapToGrid(minY - 100 - idx * ROUTE_LANE_GAP);
   });
 
   [...bottomRoutes].sort((left, right) => left.preferredY - right.preferredY).forEach((route, idx) => {
-    route.laneY = maxY + 100 + idx * laneGap;
+    route.laneY = snapToGrid(maxY + 100 + idx * ROUTE_LANE_GAP);
   });
 
-  const getStubX = (node, side) => {
+  const assignCenteredOffsets = (items, fieldName) => {
+    const ordered = [...items].sort((left, right) => {
+      if (left.preferredY !== right.preferredY) {
+        return left.preferredY - right.preferredY;
+      }
+      return left.index - right.index;
+    });
+    const midpoint = (ordered.length - 1) / 2;
+    ordered.forEach((item, idx) => {
+      item[fieldName] = (idx - midpoint) * ROUTE_FANOUT_GAP;
+    });
+  };
+
+  const sourceGroups = new Map();
+  const targetGroups = new Map();
+  const pairGroups = new Map();
+
+  routes.forEach((route) => {
+    const sourceKey = `${route.sourceNode.id()}:${route.forward ? "right" : "left"}`;
+    const targetKey = `${route.targetNode.id()}:${route.forward ? "left" : "right"}`;
+    const pairKey = `${route.sourceNode.id()}->${route.targetNode.id()}`;
+
+    if (!sourceGroups.has(sourceKey)) {
+      sourceGroups.set(sourceKey, []);
+    }
+    if (!targetGroups.has(targetKey)) {
+      targetGroups.set(targetKey, []);
+    }
+    if (!pairGroups.has(pairKey)) {
+      pairGroups.set(pairKey, []);
+    }
+
+    sourceGroups.get(sourceKey).push(route);
+    targetGroups.get(targetKey).push(route);
+    pairGroups.get(pairKey).push(route);
+  });
+
+  sourceGroups.forEach((items) => assignCenteredOffsets(items, "sourceOffset"));
+  targetGroups.forEach((items) => assignCenteredOffsets(items, "targetOffset"));
+  pairGroups.forEach((items) => assignCenteredOffsets(items, "parallelOffset"));
+
+  const getStubX = (node, side, offset = 0) => {
     const kind = node.data("kind");
     const centerX = node.position("x");
     const halfWidth = Math.max(6, node.outerWidth() / 2);
+    const magnitude = Math.abs(offset);
+    const signedOffset = side * magnitude;
 
     if (kind === "instance_port") {
-      return centerX + side * 18;
+      return snapToGrid(centerX + side * 18 + signedOffset, ROUTE_FANOUT_GAP);
     }
 
     if (kind === "module_io") {
-      return centerX + side * (halfWidth + 22);
+      return snapToGrid(centerX + side * (halfWidth + 22) + signedOffset, ROUTE_FANOUT_GAP);
     }
 
     if (kind === "instance") {
-      return centerX + side * (halfWidth + 20);
+      return snapToGrid(centerX + side * (halfWidth + 20) + signedOffset, ROUTE_FANOUT_GAP);
     }
 
-    return centerX + side * 26;
+    return snapToGrid(centerX + side * 26 + signedOffset, ROUTE_FANOUT_GAP);
   };
 
   routes.forEach((route) => {
     const side = route.forward ? 1 : -1;
-    const sourceStubX = getStubX(route.sourceNode, side);
-    const targetStubX = getStubX(route.targetNode, -side);
+    const sourceStubX = getStubX(route.sourceNode, side, route.sourceOffset || 0);
+    const targetStubX = getStubX(route.targetNode, -side, route.targetOffset || 0);
+    const laneY = snapToGrid(route.laneY + (route.parallelOffset || 0), ROUTE_PARALLEL_GAP);
     const points = {
-      a: { x: sourceStubX, y: route.sourcePos.y },
-      b: { x: sourceStubX, y: route.laneY },
-      c: { x: targetStubX, y: route.laneY },
-      d: { x: targetStubX, y: route.targetPos.y },
+      a: { x: sourceStubX, y: snapToGrid(route.sourcePos.y) },
+      b: { x: sourceStubX, y: laneY },
+      c: { x: targetStubX, y: laneY },
+      d: { x: targetStubX, y: snapToGrid(route.targetPos.y) },
     };
 
     Object.entries(points).forEach(([suffix, position]) => {
@@ -1284,6 +1546,7 @@ function applyPortViewBlockLayout(graph) {
   if (!instanceNodes.length) {
     placeModuleIoNodes(graph, 120, 420);
     placePortViewRoutes(graph);
+    placeUnconnectedPortStubs();
     return;
   }
 
@@ -1300,34 +1563,38 @@ function applyPortViewBlockLayout(graph) {
 
   const { levels, ordered } = orderInstancesWithinLevels(graph, groupedByLevel, levelByInstance);
   const canvasHeight = cyGraph.clientHeight || 760;
-  const centerY = canvasHeight / 2;
-  const maxPortCount = Math.max(0, ...instanceNodes.map((n) => n.data("port_count") || 0));
-  const maxNodeWidth = Math.round(180 + Math.min(1, maxPortCount / 40) * 140);
-  const levelXStart = 380;
-  const levelXStep = maxNodeWidth + 160;
+  const centerY = snapToGrid(canvasHeight / 2);
+  const levelColumns = levels.map((level) => ({
+    level,
+    nodes: ordered.get(level) || [],
+  }));
 
-  for (const level of levels) {
-    const group = ordered.get(level) || [];
-    const rowGap = group.length > 12 ? 172 : 220;
-    const totalHeight = Math.max(0, (group.length - 1) * rowGap);
-    const startY = centerY - totalHeight / 2;
-
-    group.forEach((node, idx) => {
+  levelColumns.forEach((entry) => {
+    const rowGap = snapToGrid(entry.nodes.length > 12 ? INSTANCE_ROW_GAP_DENSE : INSTANCE_ROW_GAP);
+    const totalHeight = Math.max(0, (entry.nodes.length - 1) * rowGap);
+    const startY = snapToGrid(centerY - totalHeight / 2);
+    entry.nodes.forEach((node, idx) => {
       node.position({
-        x: levelXStart + level * levelXStep,
+        x: snapToGrid(INSTANCE_COLUMN_START + entry.level * INSTANCE_COLUMN_STEP),
         y: startY + idx * rowGap,
       });
     });
+  });
 
-    spreadNodesVertically(group, 36);
-  }
+  distributeColumns(levelColumns, INSTANCE_COLUMN_START - 40, 180);
+  levelColumns.forEach((entry) => {
+    spreadNodesVertically(entry.nodes, LAYOUT_GRID + 12, centerY);
+  });
 
   placeInstancePortNodes(graph);
 
-  const xs = instanceNodes.map((node) => node.position("x"));
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
-  placeModuleIoNodes(graph, minX - (maxNodeWidth / 2 + 200), maxX + (maxNodeWidth / 2 + 200));
+  const leftBounds = instanceNodes.map((node) => node.position("x") - getNodeHalfSize(node).halfWidth);
+  const rightBounds = instanceNodes.map((node) => node.position("x") + getNodeHalfSize(node).halfWidth);
+  const minLeft = Math.min(...leftBounds);
+  const maxRight = Math.max(...rightBounds);
+  placeModuleIoNodes(graph, snapToGrid(minLeft - IO_COLUMN_MARGIN), snapToGrid(maxRight + IO_COLUMN_MARGIN));
+  placePortViewRoutes(graph);
+  placeUnconnectedPortStubs();
 }
 
 function renderCyGraph(graph) {
@@ -1443,7 +1710,8 @@ function renderInspector() {
     <div><span class="k">Graph mode:</span> ${escapeHtml(getEffectiveGraphMode())}</div>
     <div><span class="k">Aggregate edges:</span> ${getEffectiveAggregateEdges() ? "on" : "off"}</div>
     <div><span class="k">Show unknown:</span> ${state.showUnknownEdges ? "on" : "off"}</div>
-    <div><span class="k">Port view:</span> ${state.portView ? "on" : "off"}</div>
+    <div><span class="k">Schematic view:</span> ${state.portView ? "on" : "off"}</div>
+    <div><span class="k">Schematic mode:</span> ${escapeHtml(state.schematicMode)}</div>
     <div><span class="k">Breadcrumb:</span><br>${escapeHtml(breadcrumbText)}</div>
     ${selectionBlock}
   `;
@@ -1470,7 +1738,7 @@ function renderGraph(rawGraph) {
   const edgeSignalCounts = countEdgeSignalClasses(graph.edges || []);
 
   const focus = graph.focus_module || graph.top_module || state.selectedModule || "(unknown)";
-  graphTag.textContent = `Connectivity: ${focus} | mode: ${graph.mode || getEffectiveGraphMode()} | ports: ${state.portView ? "on" : "off"} | nodes: ${graph.nodes.length} | edges: ${graph.edges.length}`;
+  graphTag.textContent = `Connectivity: ${focus} | mode: ${graph.schematic_mode || graph.mode || getEffectiveGraphMode()} | schematic: ${state.portView ? "on" : "off"} | nodes: ${graph.nodes.length} | edges: ${graph.edges.length}`;
   renderGraphStats(nodeCounts, edgeCounts, edgeSignalCounts);
 
   const preview = {
@@ -1481,6 +1749,7 @@ function renderGraph(rawGraph) {
     aggregate_edges: getEffectiveAggregateEdges(),
     show_unknown_edges: state.showUnknownEdges,
     port_view: state.portView,
+    schematic_mode: state.schematicMode,
     interpretation: {
       note: "This view focuses on module-internal wiring between instances and module I/O.",
       drilldown: "Double-click instance node to open that child module connectivity view.",
@@ -1493,7 +1762,11 @@ function renderGraph(rawGraph) {
   };
 
   graphPreview.textContent = JSON.stringify(preview, null, 2);
-  renderCyGraph(graph);
+  if (state.portView && graph.layout?.engine === "schematic-v2") {
+    renderSchematicGraph(graph);
+  } else {
+    renderCyGraph(graph);
+  }
 }
 
 async function loadHierarchy(topModule) {
@@ -1518,6 +1791,8 @@ async function loadGraph(moduleName, breadcrumb = null) {
     mode: getEffectiveGraphMode(),
     aggregate_edges: String(getEffectiveAggregateEdges()),
     port_view: String(state.portView),
+    schematic: String(state.portView),
+    schematic_mode: state.schematicMode,
   });
 
   const graph = await apiRequest(`/api/project/connectivity/${encodeURIComponent(moduleName)}?${params.toString()}`);
@@ -1689,6 +1964,23 @@ portViewToggle?.addEventListener("change", async () => {
   }
 });
 
+
+schematicModeSelect.addEventListener("change", async () => {
+  state.schematicMode = schematicModeSelect.value;
+  if (!state.selectedModule || !state.portView) {
+    return;
+  }
+
+  try {
+    setStatus("Updating schematic...", "busy");
+    await loadGraph(state.selectedModule, state.breadcrumb.length ? [...state.breadcrumb] : [state.selectedModule]);
+    setStatus("Graph updated", "ok");
+  } catch (error) {
+    setStatus("Graph update failed", "error");
+    inspector.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
+  }
+});
+
 folderInput?.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     handleLoad();
@@ -1696,10 +1988,11 @@ folderInput?.addEventListener("keydown", (event) => {
 });
 
 enforcePortViewMode();
-if (graphModeSelect) graphModeSelect.value = getEffectiveGraphMode();
-if (aggregateToggle) aggregateToggle.checked = getEffectiveAggregateEdges();
-if (showUnknownToggle) showUnknownToggle.checked = state.showUnknownEdges;
-if (portViewToggle) portViewToggle.checked = state.portView;
+graphModeSelect.value = getEffectiveGraphMode();
+aggregateToggle.checked = getEffectiveAggregateEdges();
+showUnknownToggle.checked = state.showUnknownEdges;
+portViewToggle.checked = state.portView;
+schematicModeSelect.value = state.schematicMode;
 
 clearGraphStats();
 renderBreadcrumb();

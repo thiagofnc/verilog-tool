@@ -143,6 +143,8 @@ def get_module_connectivity_graph(
     mode: str = Query(default="compact"),
     aggregate_edges: bool = Query(default=False),
     port_view: bool = Query(default=False),
+    schematic: bool = Query(default=False),
+    schematic_mode: str = Query(default="full"),
 ) -> dict[str, object]:
     try:
         with state_lock:
@@ -151,6 +153,8 @@ def get_module_connectivity_graph(
                 mode=mode,
                 aggregate_edges=aggregate_edges,
                 port_view=port_view,
+                schematic=schematic,
+                schematic_mode=schematic_mode,
             )
     except (RuntimeError, ValueError) as exc:
         raise _bad_request(str(exc)) from exc
