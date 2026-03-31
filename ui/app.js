@@ -577,8 +577,29 @@ function ensureCytoscape() {
       {
         selector: 'edge[route_segment = 1]',
         style: {
+          "curve-style": "straight",
           "target-arrow-shape": "none",
           "source-arrow-shape": "none",
+        },
+      },
+      {
+        selector: 'edge[routing_type = "netlabel"]',
+        style: {
+          "line-opacity": 0,
+          "target-arrow-shape": "none",
+          "source-label": "data(net_label_text)",
+          "target-label": "data(net_label_text)",
+          "source-text-offset": 26,
+          "target-text-offset": 26,
+          "font-size": 9,
+          "color": "#9dcc60",
+          "text-background-color": "#1b2c10",
+          "text-background-opacity": 1,
+          "text-background-shape": "roundrectangle",
+          "text-background-padding": "2px",
+          "text-border-color": "#5a8030",
+          "text-border-width": 0.8,
+          "text-border-opacity": 1,
         },
       },
       {
@@ -782,6 +803,71 @@ function buildCyElements(graph) {
   return [...nodes, ...edges];
 }
 
+function computeEdgeRoutingTypes(graph) {
+  const portToInstance = new Map();
+  const instanceIds = new Set();
+
+  for (const node of graph.nodes || []) {
+    if (node.kind === "instance") {
+      instanceIds.add(node.id);
+    }
+    if (node.kind === "instance_port" && node.instance_node_id) {
+      portToInstance.set(node.id, node.instance_node_id);
+    }
+  }
+
+  const indegree = new Map([...instanceIds].map((id) => [id, 0]));
+  const outgoing = new Map([...instanceIds].map((id) => [id, new Set()]));
+
+  for (const edge of graph.edges || []) {
+    const src = portToInstance.get(edge.source) || (instanceIds.has(edge.source) ? edge.source : null);
+    const dst = portToInstance.get(edge.target) || (instanceIds.has(edge.target) ? edge.target : null);
+    if (!src || !dst || src === dst || !outgoing.has(src) || outgoing.get(src).has(dst)) {
+      continue;
+    }
+    outgoing.get(src).add(dst);
+    indegree.set(dst, (indegree.get(dst) || 0) + 1);
+  }
+
+  const level = new Map([...instanceIds].map((id) => [id, 0]));
+  const queue = [...instanceIds].filter((id) => !(indegree.get(id) || 0));
+  while (queue.length) {
+    const curr = queue.shift();
+    const currLevel = level.get(curr) || 0;
+    for (const next of (outgoing.get(curr) || [])) {
+      level.set(next, Math.max(level.get(next) || 0, currLevel + 1));
+      indegree.set(next, (indegree.get(next) || 0) - 1);
+      if (!(indegree.get(next) || 0)) {
+        queue.push(next);
+      }
+    }
+  }
+
+  return (edge) => {
+    const srcInst = portToInstance.get(edge.source) || (instanceIds.has(edge.source) ? edge.source : null);
+    const dstInst = portToInstance.get(edge.target) || (instanceIds.has(edge.target) ? edge.target : null);
+
+    // Connections involving module I/O are always routed (they're at the boundary, always adjacent)
+    if (!srcInst || !dstInst) {
+      return "routed";
+    }
+
+    const srcLvl = level.get(srcInst) ?? 0;
+    const dstLvl = level.get(dstInst) ?? 0;
+
+    // Backward edge (feedback) or same-level lateral: use net label
+    if (srcLvl >= dstLvl) {
+      return "netlabel";
+    }
+    // Skips more than one column: use net label
+    if (dstLvl - srcLvl > 1) {
+      return "netlabel";
+    }
+
+    return "routed";
+  };
+}
+
 function buildPortViewCyElements(graph) {
   const elements = [];
   const sideCountsByInstance = new Map();
@@ -878,15 +964,66 @@ function buildPortViewCyElements(graph) {
     });
   });
 
+  const classifyEdge = computeEdgeRoutingTypes(graph);
+
   (graph.edges || []).forEach((edge, index) => {
-    elements.push({
-      data: {
-        ...edge,
-        is_bus: edge.is_bus ? 1 : 0,
-        sig_class: edge.sig_class || "wire",
-        port_view: 1,
-        id: `${edge.source}->${edge.target}:${edge.kind || "connection"}:${index}`,
-      },
+    const routingType = classifyEdge(edge);
+
+    if (routingType === "netlabel") {
+      const firstName = (edge.nets && edge.nets.length) ? edge.nets[0] : (edge.net || "?");
+      const labelText = (edge.nets && edge.nets.length > 1)
+        ? `${firstName} +${edge.nets.length - 1}`
+        : firstName;
+      elements.push({
+        data: {
+          ...edge,
+          is_bus: edge.is_bus ? 1 : 0,
+          sig_class: edge.sig_class || "wire",
+          port_view: 1,
+          routing_type: "netlabel",
+          net_label_text: labelText,
+          id: `${edge.source}->${edge.target}:${edge.kind || "connection"}:${index}`,
+        },
+      });
+      return;
+    }
+
+    // Routed: create 4 anchor nodes + 5 straight segment edges
+    const baseId = `route:${index}`;
+    const routeMeta = {
+      ...edge,
+      is_bus: edge.is_bus ? 1 : 0,
+      sig_class: edge.sig_class || "wire",
+      port_view: 1,
+      route_segment: 1,
+      route_id: baseId,
+      route_index: index,
+    };
+
+    ["a", "b", "c", "d"].forEach((suffix) => {
+      elements.push({
+        data: {
+          id: `${baseId}:${suffix}`,
+          label: "",
+          kind: "route_anchor",
+          route_id: baseId,
+          route_index: index,
+          sig_class: routeMeta.sig_class,
+          is_bus: routeMeta.is_bus,
+          bit_width: routeMeta.bit_width,
+          port_view: 1,
+        },
+      });
+    });
+
+    [
+      { id: `${baseId}:seg0`, source: edge.source, target: `${baseId}:a`, segment_role: "source" },
+      { id: `${baseId}:seg1`, source: `${baseId}:a`, target: `${baseId}:b`, segment_role: "vertical_entry" },
+      { id: `${baseId}:seg2`, source: `${baseId}:b`, target: `${baseId}:c`, segment_role: "trunk" },
+      { id: `${baseId}:seg3`, source: `${baseId}:c`, target: `${baseId}:d`, segment_role: "vertical_exit" },
+      { id: `${baseId}:seg4`, source: `${baseId}:d`, target: edge.target, segment_role: "target" },
+    ].forEach((segment) => {
+      elements.push({ data: { ...routeMeta, ...segment } });
     });
   });
 
