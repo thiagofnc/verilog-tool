@@ -42,7 +42,16 @@ const cyGraph = document.getElementById("cyGraph");
 const hoverTooltip = document.getElementById("hoverTooltip");
 const inspector = document.getElementById("inspector");
 
+const API_BASE = window.location.protocol === "file:" ? "http://127.0.0.1:8000" : "";
+
+if (typeof cytoscape === "function" && typeof cytoscapeElk === "function") {
+  cytoscape.use(cytoscapeElk);
+}
+
 function setStatus(text, kind) {
+  if (!statusBadge) {
+    return;
+  }
   statusBadge.textContent = text;
   statusBadge.className = `status ${kind}`;
 }
@@ -57,10 +66,18 @@ function escapeHtml(text) {
 }
 
 async function apiRequest(path, options = {}) {
-  const response = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
+  let response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      headers: { "Content-Type": "application/json" },
+      ...options,
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Request to ${API_BASE || window.location.origin || "current origin"}${path} failed: ${detail}. Start the FastAPI server and open the app from http://127.0.0.1:8000/.`
+    );
+  }
 
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -94,6 +111,10 @@ function countEdgeSignalClasses(edges) {
 }
 
 function enforcePortViewMode() {
+  if (!graphModeSelect || !aggregateToggle) {
+    return;
+  }
+
   if (state.portView) {
     if (state.graphMode !== "compact") {
       state.graphMode = "compact";
@@ -389,8 +410,8 @@ function ensureCytoscape() {
         selector: 'node[kind = "instance_port"]',
         style: {
           shape: "round-rectangle",
-          width: 8,
-          height: 8,
+          width: 10,
+          height: 10,
           "background-color": "#ffd38a",
           "border-width": 1,
           "border-color": "#5b4a2f",
@@ -399,8 +420,8 @@ function ensureCytoscape() {
           color: "#e6eef3",
           "text-valign": "center",
           "text-wrap": "ellipsis",
-          "text-max-width": 108,
-          "overlay-padding": 3,
+          "text-max-width": 96,
+          "overlay-padding": 4,
         },
       },
       {
@@ -408,7 +429,7 @@ function ensureCytoscape() {
         style: {
           "background-color": "#f0b35f",
           "text-halign": "right",
-          "text-margin-x": -14,
+          "text-margin-x": -16,
         },
       },
       {
@@ -416,14 +437,14 @@ function ensureCytoscape() {
         style: {
           "background-color": "#a3c6ff",
           "text-halign": "left",
-          "text-margin-x": 14,
+          "text-margin-x": 16,
         },
       },
       {
         selector: 'node[kind = "instance_port"][direction = "unknown"]',
         style: {
           "text-halign": "left",
-          "text-margin-x": 14,
+          "text-margin-x": 16,
         },
       },
       {
@@ -485,31 +506,19 @@ function ensureCytoscape() {
           "target-arrow-color": "#42d392",
           "target-arrow-shape": "triangle",
           "arrow-scale": 0.7,
-          "curve-style": "taxi",
-          "taxi-direction": "rightward",
-          "taxi-turn": 22,
-          "taxi-turn-min-distance": 12,
+          "curve-style": "bezier",
+          "control-point-step-size": 40,
         },
       },
       {
         selector: 'edge[port_view = 1]',
         style: {
-          "curve-style": "straight",
+          "curve-style": "bezier",
+          "control-point-step-size": 40,
           "arrow-scale": 0.65,
-          "line-opacity": 0.92,
-        },
-      },
-      {
-        selector: 'edge[route_segment = 1]',
-        style: {
-          "target-arrow-shape": "none",
-          "source-arrow-shape": "none",
-        },
-      },
-      {
-        selector: 'edge[route_segment = 1][segment_role = "target"]',
-        style: {
-          "target-arrow-shape": "triangle",
+          "line-opacity": 0.88,
+          "source-endpoint": "outside-to-line",
+          "target-endpoint": "outside-to-line",
         },
       },
       {
@@ -733,81 +742,14 @@ function buildPortViewCyElements(graph) {
   }
 
   (graph.edges || []).forEach((edge, index) => {
-    const baseId = `route:${index}`;
-    const routeMeta = {
-      ...edge,
-      is_bus: edge.is_bus ? 1 : 0,
-      sig_class: edge.sig_class || "wire",
-      port_view: 1,
-      route_segment: 1,
-      route_id: baseId,
-      route_index: index,
-    };
-
-    const routeNodes = [
-      { id: `${baseId}:a`, route_role: "stub_source" },
-      { id: `${baseId}:b`, route_role: "lane_entry" },
-      { id: `${baseId}:c`, route_role: "lane_exit" },
-      { id: `${baseId}:d`, route_role: "stub_target" },
-    ];
-
-    routeNodes.forEach((routeNode) => {
-      elements.push({
-        data: {
-          id: routeNode.id,
-          label: "",
-          kind: "route_anchor",
-          route_role: routeNode.route_role,
-          route_id: baseId,
-          route_index: index,
-          sig_class: routeMeta.sig_class,
-          is_bus: routeMeta.is_bus,
-          bit_width: routeMeta.bit_width,
-          signal_kind: routeMeta.signal_kind,
-        },
-      });
-    });
-
-    const segments = [
-      {
-        id: `${baseId}:seg0`,
-        source: edge.source,
-        target: `${baseId}:a`,
-        segment_role: "source",
+    elements.push({
+      data: {
+        ...edge,
+        is_bus: edge.is_bus ? 1 : 0,
+        sig_class: edge.sig_class || "wire",
+        port_view: 1,
+        id: `${edge.source}->${edge.target}:${edge.kind || "connection"}:${index}`,
       },
-      {
-        id: `${baseId}:seg1`,
-        source: `${baseId}:a`,
-        target: `${baseId}:b`,
-        segment_role: "vertical_entry",
-      },
-      {
-        id: `${baseId}:seg2`,
-        source: `${baseId}:b`,
-        target: `${baseId}:c`,
-        segment_role: "trunk",
-      },
-      {
-        id: `${baseId}:seg3`,
-        source: `${baseId}:c`,
-        target: `${baseId}:d`,
-        segment_role: "vertical_exit",
-      },
-      {
-        id: `${baseId}:seg4`,
-        source: `${baseId}:d`,
-        target: edge.target,
-        segment_role: "target",
-      },
-    ];
-
-    segments.forEach((segment) => {
-      elements.push({
-        data: {
-          ...routeMeta,
-          ...segment,
-        },
-      });
     });
   });
 
@@ -1021,7 +963,7 @@ function orderInstancesWithinLevels(graph, groupedByLevel, levelByInstance) {
     return index;
   };
 
-  const scoreNode = (node, neighbors, index) => {
+  const scoreNode = (_node, neighbors, index) => {
     const scores = neighbors
       .map((neighborId) => index.get(neighborId))
       .filter((value) => value !== undefined);
@@ -1359,8 +1301,10 @@ function applyPortViewBlockLayout(graph) {
   const { levels, ordered } = orderInstancesWithinLevels(graph, groupedByLevel, levelByInstance);
   const canvasHeight = cyGraph.clientHeight || 760;
   const centerY = canvasHeight / 2;
+  const maxPortCount = Math.max(0, ...instanceNodes.map((n) => n.data("port_count") || 0));
+  const maxNodeWidth = Math.round(180 + Math.min(1, maxPortCount / 40) * 140);
   const levelXStart = 380;
-  const levelXStep = 360;
+  const levelXStep = maxNodeWidth + 160;
 
   for (const level of levels) {
     const group = ordered.get(level) || [];
@@ -1383,8 +1327,7 @@ function applyPortViewBlockLayout(graph) {
   const xs = instanceNodes.map((node) => node.position("x"));
   const minX = Math.min(...xs);
   const maxX = Math.max(...xs);
-  placeModuleIoNodes(graph, minX - 320, maxX + 320);
-  placePortViewRoutes(graph);
+  placeModuleIoNodes(graph, minX - (maxNodeWidth / 2 + 200), maxX + (maxNodeWidth / 2 + 200));
 }
 
 function renderCyGraph(graph) {
@@ -1392,33 +1335,53 @@ function renderCyGraph(graph) {
     return;
   }
 
-  state.cy.elements().remove();
-  state.cy.add(buildCyElements(graph));
+  const showGraph = () => {
+    state.cy.fit(undefined, 60);
+    graphEmpty.classList.add("hidden");
+  };
 
-  if (state.portView) {
-    applyPortViewBlockLayout(graph);
-  } else {
-    const roots = getLayoutRoots(graph);
-    const layout = {
-      name: "breadthfirst",
-      eles: state.cy.elements().not("node[kind = \"instance_port\"]"),
-      directed: true,
-      animate: false,
-      padding: 30,
-      spacingFactor: graph.nodes.length > 120 ? 1.05 : 1.28,
-      avoidOverlap: true,
-      transform: (_node, position) => ({ x: position.y, y: position.x }),
-    };
+  const showError = (error) => {
+    graphEmpty.classList.remove("hidden");
+    graphEmpty.innerHTML = "<h3>Graph render failed</h3><p>The project loaded, but the graph view could not be rendered.</p>";
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(`Graph render failed: ${detail}`);
+  };
 
-    if (roots.length) {
-      layout.roots = roots;
-    }
-
-    state.cy.layout(layout).run();
+  try {
+    state.cy.elements().remove();
+    state.cy.add(buildCyElements(graph));
+  } catch (error) {
+    showError(error);
+    throw new Error(`Graph render failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 
-  state.cy.fit(undefined, 60);
-  graphEmpty.classList.add("hidden");
+  if (state.portView) {
+    try {
+      applyPortViewBlockLayout(graph);
+      showGraph();
+    } catch (error) {
+      showError(error);
+    }
+    return;
+  }
+
+  state.cy.elements().not('node[kind = "instance_port"]').layout({
+    name: "elk",
+    elk: {
+      algorithm: "layered",
+      "elk.direction": "RIGHT",
+      "elk.edgeRouting": "ORTHOGONAL",
+      "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
+      "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "120",
+      "elk.spacing.nodeNode": "60",
+      "elk.spacing.edgeNode": "20",
+      "elk.spacing.edgeEdge": "10",
+    },
+    animate: false,
+    fit: false,
+    stop: showGraph,
+  }).run();
 }
 function renderInspector() {
   const summary = state.summary || {};
@@ -1602,14 +1565,14 @@ async function refreshProject() {
 }
 
 async function handleLoad() {
-  const folder = folderInput.value.trim();
+  const folder = folderInput ? folderInput.value.trim() : state.folder;
   if (!folder) {
     setStatus("Need folder path", "error");
     return;
   }
 
   state.folder = folder;
-  state.parser = parserSelect.value;
+  state.parser = parserSelect ? parserSelect.value : state.parser;
 
   try {
     setStatus("Loading...", "busy");
@@ -1619,18 +1582,30 @@ async function handleLoad() {
     });
 
     state.summary = summary;
+    renderInspector();
+  } catch (error) {
+    setStatus("Project load failed", "error");
+    inspector.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
+    renderGraph(null);
+    return;
+  }
+
+  try {
     await refreshProject();
     renderInspector();
-    setStatus("Project loaded", "ok");
+    setStatus(`Project loaded (${state.summary?.parser_backend || state.parser})`, "ok");
   } catch (error) {
-    setStatus("Load failed", "error");
-    inspector.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
+    setStatus("Project loaded, refresh failed", "error");
+    inspector.innerHTML = `
+      <p>${escapeHtml(error.message)}</p>
+      <p>Project parsing succeeded with parser: <strong>${escapeHtml(state.summary?.parser_backend || state.parser)}</strong></p>
+    `;
     renderGraph(null);
   }
 }
 
-loadBtn.addEventListener("click", handleLoad);
-refreshBtn.addEventListener("click", async () => {
+loadBtn?.addEventListener("click", handleLoad);
+refreshBtn?.addEventListener("click", async () => {
   try {
     setStatus("Refreshing...", "busy");
     await refreshProject();
@@ -1641,14 +1616,14 @@ refreshBtn.addEventListener("click", async () => {
   }
 });
 
-fitBtn.addEventListener("click", () => {
+fitBtn?.addEventListener("click", () => {
   if (!state.cy || !state.cy.elements().length) {
     return;
   }
   state.cy.fit(undefined, 30);
 });
 
-graphModeSelect.addEventListener("change", async () => {
+graphModeSelect?.addEventListener("change", async () => {
   state.graphMode = graphModeSelect.value;
   const beforeMode = state.graphMode;
   enforcePortViewMode();
@@ -1670,7 +1645,7 @@ graphModeSelect.addEventListener("change", async () => {
   }
 });
 
-aggregateToggle.addEventListener("change", async () => {
+aggregateToggle?.addEventListener("change", async () => {
   state.aggregateEdges = aggregateToggle.checked;
   if (!state.selectedModule) {
     return;
@@ -1686,7 +1661,7 @@ aggregateToggle.addEventListener("change", async () => {
   }
 });
 
-showUnknownToggle.addEventListener("change", () => {
+showUnknownToggle?.addEventListener("change", () => {
   state.showUnknownEdges = showUnknownToggle.checked;
   if (!state.graph) {
     return;
@@ -1696,7 +1671,7 @@ showUnknownToggle.addEventListener("change", () => {
   renderInspector();
 });
 
-portViewToggle.addEventListener("change", async () => {
+portViewToggle?.addEventListener("change", async () => {
   state.portView = portViewToggle.checked;
   enforcePortViewMode();
 
@@ -1714,17 +1689,17 @@ portViewToggle.addEventListener("change", async () => {
   }
 });
 
-folderInput.addEventListener("keydown", (event) => {
+folderInput?.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     handleLoad();
   }
 });
 
 enforcePortViewMode();
-graphModeSelect.value = getEffectiveGraphMode();
-aggregateToggle.checked = getEffectiveAggregateEdges();
-showUnknownToggle.checked = state.showUnknownEdges;
-portViewToggle.checked = state.portView;
+if (graphModeSelect) graphModeSelect.value = getEffectiveGraphMode();
+if (aggregateToggle) aggregateToggle.checked = getEffectiveAggregateEdges();
+if (showUnknownToggle) showUnknownToggle.checked = state.showUnknownEdges;
+if (portViewToggle) portViewToggle.checked = state.portView;
 
 clearGraphStats();
 renderBreadcrumb();
