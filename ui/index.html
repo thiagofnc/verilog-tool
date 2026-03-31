@@ -75,7 +75,15 @@
               </label>
               <label class="mini-check" for="portViewToggle">
                 <input id="portViewToggle" type="checkbox" checked />
-                port view
+                schematic
+              </label>
+              <label class="mini-control" for="schematicModeSelect">
+                schematic mode
+                <select id="schematicModeSelect" aria-label="Schematic mode">
+                  <option value="full">full</option>
+                  <option value="simplified">simplified</option>
+                  <option value="bus">bus-centric</option>
+                </select>
               </label>
               <span id="graphTag">No graph loaded</span>
               <button id="fitBtn" type="button">Fit</button>
@@ -90,6 +98,7 @@
 
           <div id="graphCanvas" class="graph-canvas">
             <div id="cyGraph" class="cy-graph"></div>
+            <div id="schematicLayer" class="schematic-layer hidden"></div>
             <div id="graphEmpty" class="graph-placeholder">
               <h3>Connectivity Viewer</h3>
               <p>Select a module from the hierarchy tree to render internal wiring.</p>
