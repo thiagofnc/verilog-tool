@@ -1762,11 +1762,7 @@ function renderGraph(rawGraph) {
   };
 
   graphPreview.textContent = JSON.stringify(preview, null, 2);
-  if (state.portView && graph.layout?.engine === "schematic-v2") {
-    renderSchematicGraph(graph);
-  } else {
-    renderCyGraph(graph);
-  }
+  renderCyGraph(graph);
 }
 
 async function loadHierarchy(topModule) {
