@@ -16,7 +16,7 @@
   aggregateEdges: true,
   showUnknownEdges: false,
   portView: true,
-  schematicMode: "full",
+  schematicMode: "simplified",
   lastTapNodeId: null,
   lastTapTs: 0,
 };
@@ -88,6 +88,19 @@ function snapToGrid(value, grid = LAYOUT_GRID) {
 
 function naturalCompare(left, right) {
   return String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: "base" });
+}
+
+function isControlSignalName(name) {
+  const normalized = ` ${String(name || "").toLowerCase()} `;
+  return ["clk", "clock", "rst", "reset", "enable", "en", "start", "valid", "ready", "busy", "done"]
+    .some((token) => normalized.includes(` ${token} `) || normalized.includes(token));
+}
+
+function summarizeEdgeNetName(edge) {
+  if (edge.nets && edge.nets.length) {
+    return edge.nets[0];
+  }
+  return edge.net || edge.signal_name || "";
 }
 
 async function apiRequest(path, options = {}) {
@@ -424,16 +437,16 @@ function ensureCytoscape() {
           shape: "rectangle",
           width: "data(layout_width)",
           height: "data(layout_height)",
-          "background-color": "#0b1d2e",
+          "background-color": "#0b1721",
           "border-width": 2,
-          "border-color": "#3a8fc4",
+          "border-color": "#356d90",
           label: "data(label)",
           "font-size": 11,
           "font-weight": "bold",
-          color: "#bdd8ee",
+          color: "#d3e3ec",
           "text-valign": "top",
           "text-halign": "center",
-          "text-margin-y": 14,
+          "text-margin-y": 13,
           "text-wrap": "wrap",
           "text-max-width": 220,
           "overlay-padding": 6,
@@ -443,39 +456,39 @@ function ensureCytoscape() {
         selector: 'node[kind = "instance_port"]',
         style: {
           shape: "rectangle",
-          width: 8,
-          height: 8,
-          "background-color": "#7aafc8",
-          "border-width": 1.5,
+          width: 7,
+          height: 7,
+          "background-color": "#6d93aa",
+          "border-width": 1.2,
           "border-color": "#263d50",
-          label: "data(port_name)",
-          "font-size": 9,
+          label: "data(display_label)",
+          "font-size": 8,
           "font-family": "monospace",
-          color: "#a8cce0",
+          color: "#7fa6ba",
           "text-valign": "center",
           "text-wrap": "ellipsis",
-          "text-max-width": 90,
+          "text-max-width": 72,
           "overlay-padding": 3,
         },
       },
       {
         selector: 'node[kind = "instance_port"][direction = "output"]',
         style: {
-          "background-color": "#d47a18",
+          "background-color": "#c77724",
           "border-color": "#5a3208",
           "text-halign": "right",
-          "text-margin-x": 20,
-          color: "#f0c070",
+          "text-margin-x": 17,
+          color: "#d8b17e",
         },
       },
       {
         selector: 'node[kind = "instance_port"][direction = "input"]',
         style: {
-          "background-color": "#2e7abf",
+          "background-color": "#3778a8",
           "border-color": "#102840",
           "text-halign": "right",
-          "text-margin-x": 20,
-          color: "#90c8f0",
+          "text-margin-x": 17,
+          color: "#88b8d6",
         },
       },
       {
@@ -484,7 +497,7 @@ function ensureCytoscape() {
           "background-color": "#5a7a8f",
           "border-color": "#2a3c48",
           "text-halign": "right",
-          "text-margin-x": 20,
+          "text-margin-x": 17,
           color: "#a0b8c8",
         },
       },
@@ -621,8 +634,8 @@ function ensureCytoscape() {
         style: {
           "curve-style": "bezier",
           "control-point-step-size": 40,
-          "arrow-scale": 0.60,
-          "line-opacity": 0.88,
+          "arrow-scale": 0.56,
+          "line-opacity": 0.74,
           "line-cap": "butt",
           "source-endpoint": "outside-to-line",
           "target-endpoint": "outside-to-line",
@@ -641,14 +654,14 @@ function ensureCytoscape() {
         style: {
           shape: "roundrectangle",
           width: "data(label_width)",
-          height: 18,
-          "background-color": "#0e1e09",
+          height: 17,
+          "background-color": "#12210f",
           "border-width": 1,
-          "border-color": "#3a6820",
+          "border-color": "#45652d",
           label: "data(net_label_text)",
-          "font-size": 9,
+          "font-size": 8,
           "font-family": "monospace",
-          color: "#72cc50",
+          color: "#8ccf72",
           "text-valign": "center",
           "text-halign": "center",
           "overlay-padding": 3,
@@ -722,7 +735,7 @@ function ensureCytoscape() {
       {
         selector: "edge:selected",
         style: {
-          width: 3.4,
+          width: 3.1,
           "line-color": "#ffc857",
           "target-arrow-color": "#ffc857",
         },
@@ -756,7 +769,7 @@ function ensureCytoscape() {
         style: {
           "line-color": "#ffc857",
           "target-arrow-color": "#ffc857",
-          width: 3.4,
+          width: 3.1,
           "z-index": 100,
           "line-opacity": 1,
         },
@@ -881,12 +894,16 @@ function ensureCytoscape() {
     const countText = data.net_count ? `nets: ${data.net_count}` : "";
     const classText = data.sig_class || "wire";
     const widthText = data.bit_width && data.bit_width > 1 ? `width: ${data.bit_width}` : "width: 1";
+    const routingText = data.routing_mode
+      ? `display: ${data.routing_mode}${data.routing_reason ? ` | ${data.routing_reason}` : ""}`
+      : "";
 
     hoverTooltip.innerHTML = `
       <div>${escapeHtml(netSummary)}</div>
       <div class="kind">${escapeHtml(data.source)} -> ${escapeHtml(data.target)}</div>
       <div class="kind">${escapeHtml(classText)} | ${escapeHtml(widthText)}${countText ? ` | ${escapeHtml(countText)}` : ""}</div>
       <div class="kind">${escapeHtml(data.flow || "directed")}</div>
+      ${routingText ? `<div class="kind">${escapeHtml(routingText)}</div>` : ""}
     `;
     hoverTooltip.style.display = "block";
     const p = event.renderedPosition;
@@ -973,8 +990,9 @@ function buildCyElements(graph) {
 }
 
 function computeEdgeRoutingTypes(graph) {
-  const portToInstance = new Map();
   const instanceIds = new Set();
+  const portToInstance = new Map();
+  const portMeta = new Map();
 
   for (const node of graph.nodes || []) {
     if (node.kind === "instance") {
@@ -982,6 +1000,9 @@ function computeEdgeRoutingTypes(graph) {
     }
     if (node.kind === "instance_port" && node.instance_node_id) {
       portToInstance.set(node.id, node.instance_node_id);
+    }
+    if (node.kind === "instance_port" || node.kind === "module_io") {
+      portMeta.set(node.id, node);
     }
   }
 
@@ -1012,28 +1033,69 @@ function computeEdgeRoutingTypes(graph) {
     }
   }
 
+  const pairCounts = new Map();
+  const netStats = new Map();
+  for (const edge of graph.edges || []) {
+    const srcInst = portToInstance.get(edge.source) || (instanceIds.has(edge.source) ? edge.source : null);
+    const dstInst = portToInstance.get(edge.target) || (instanceIds.has(edge.target) ? edge.target : null);
+    const pairKey = `${srcInst || edge.source}->${dstInst || edge.target}`;
+    pairCounts.set(pairKey, (pairCounts.get(pairKey) || 0) + 1);
+
+    const netName = summarizeEdgeNetName(edge) || `${edge.source}->${edge.target}`;
+    const stat = netStats.get(netName) || {
+      fanout: 0,
+      endpoints: new Set(),
+      controlLike: false,
+      busLike: false,
+    };
+    stat.fanout += 1;
+    stat.endpoints.add(edge.source);
+    stat.endpoints.add(edge.target);
+    stat.controlLike = stat.controlLike || isControlSignalName(netName);
+    stat.busLike = stat.busLike || Boolean(edge.is_bus || ((edge.bit_width || 1) > 1) || edge.sig_class === "bus");
+    netStats.set(netName, stat);
+  }
+
   return (edge) => {
     const srcInst = portToInstance.get(edge.source) || (instanceIds.has(edge.source) ? edge.source : null);
     const dstInst = portToInstance.get(edge.target) || (instanceIds.has(edge.target) ? edge.target : null);
+    const netName = summarizeEdgeNetName(edge) || "(unnamed net)";
+    const netStat = netStats.get(netName) || { fanout: 1, endpoints: new Set([edge.source, edge.target]), controlLike: false, busLike: false };
+    const isBus = Boolean(edge.is_bus || ((edge.bit_width || 1) > 1) || edge.sig_class === "bus" || netStat.busLike);
+    const pairKey = `${srcInst || edge.source}->${dstInst || edge.target}`;
+    const pairCount = pairCounts.get(pairKey) || 1;
+    const srcNode = portMeta.get(edge.source);
+    const dstNode = portMeta.get(edge.target);
 
-    // Connections involving module I/O are always routed (they're at the boundary, always adjacent)
     if (!srcInst || !dstInst) {
-      return "routed";
+      const boundaryControl = isControlSignalName(srcNode?.port_name || srcNode?.label) || isControlSignalName(dstNode?.port_name || dstNode?.label);
+      if (boundaryControl && netStat.fanout > 1) {
+        return { mode: "netlabel", reason: "Boundary control net is repeated and reads better by name." };
+      }
+      return { mode: "routed", reason: "Boundary connection is local to the module interface." };
     }
 
     const srcLvl = level.get(srcInst) ?? 0;
     const dstLvl = level.get(dstInst) ?? 0;
-
-    // Backward edge (feedback) or same-level lateral: use net label
     if (srcLvl >= dstLvl) {
-      return "netlabel";
+      return { mode: "netlabel", reason: "Feedback or lateral connection is clearer by shared net name." };
     }
-    // Skips more than one column: use net label
     if (dstLvl - srcLvl > 1) {
-      return "netlabel";
+      return { mode: "netlabel", reason: "Long cross-stage connection is clearer by shared net name." };
     }
-
-    return "routed";
+    if (netStat.controlLike && netStat.fanout > 1) {
+      return { mode: "netlabel", reason: "Global control-style nets are less cluttered when named instead of fully traced." };
+    }
+    if (!isBus && netStat.fanout > 2) {
+      return { mode: "netlabel", reason: "High-fanout scalar net is clearer by name than by repeated stubs." };
+    }
+    if (!isBus && pairCount > 2) {
+      return { mode: "netlabel", reason: "Dense scalar bundle between the same blocks is clearer by name." };
+    }
+    if (isBus) {
+      return { mode: "routed", reason: "Local datapath bus is worth tracing explicitly." };
+    }
+    return { mode: "routed", reason: "Short forward connection is worth tracing explicitly." };
   };
 }
 
@@ -1085,11 +1147,16 @@ function buildPortViewCyElements(graph) {
       ? `${node.instance_name || node.label || node.id}\n(${node.module_name || ""})`
       : undefined;
 
+    const portName = String(node.port_name || node.label || "");
+    const importantPort = isControlSignalName(portName) || node.is_bus;
+    const showPortLabel = importantPort || (connectionCounts.get(node.id) || 0) <= 1;
+
     elements.push({
       data: {
         ...node,
         is_bus: node.is_bus ? 1 : 0,
         port_view: 1,
+        ...(node.kind === "instance_port" ? { display_label: showPortLabel ? portName : "" } : {}),
         max_side_port_count: maxSidePortCount,
         connection_count: connectionCounts.get(node.id) || 0,
         ...(layoutWidth ? { layout_width: layoutWidth } : {}),
@@ -1142,7 +1209,9 @@ function buildPortViewCyElements(graph) {
   const classifyEdge = computeEdgeRoutingTypes(graph);
 
   (graph.edges || []).forEach((edge, index) => {
-    const routingType = classifyEdge(edge);
+    const routingDecision = classifyEdge(edge);
+
+    const routingType = routingDecision.mode;
 
     if (routingType === "netlabel") {
       const firstName = (edge.nets && edge.nets.length) ? edge.nets[0] : (edge.net || "?");
@@ -1161,6 +1230,8 @@ function buildPortViewCyElements(graph) {
           netlabel_group: firstName,
           label_width: labelWidth,
           connected_port: edge.source,
+          routing_mode: routingType,
+          routing_reason: routingDecision.reason,
           port_view: 1,
         },
       });
@@ -1172,6 +1243,8 @@ function buildPortViewCyElements(graph) {
           kind: "connection",
           netlabel_stub: 1,
           port_view: 1,
+          routing_mode: routingType,
+          routing_reason: routingDecision.reason,
           sig_class: edge.sig_class || "wire",
           is_bus: edge.is_bus ? 1 : 0,
         },
@@ -1187,6 +1260,8 @@ function buildPortViewCyElements(graph) {
           netlabel_group: firstName,
           label_width: labelWidth,
           connected_port: edge.target,
+          routing_mode: routingType,
+          routing_reason: routingDecision.reason,
           port_view: 1,
         },
       });
@@ -1198,6 +1273,8 @@ function buildPortViewCyElements(graph) {
           kind: "connection",
           netlabel_stub: 1,
           port_view: 1,
+          routing_mode: routingType,
+          routing_reason: routingDecision.reason,
           sig_class: edge.sig_class || "wire",
           is_bus: edge.is_bus ? 1 : 0,
         },
@@ -1213,6 +1290,8 @@ function buildPortViewCyElements(graph) {
       sig_class: edge.sig_class || "wire",
       port_view: 1,
       route_segment: 1,
+      routing_mode: routingType,
+      routing_reason: routingDecision.reason,
       route_id: baseId,
       route_index: index,
     };
@@ -1681,10 +1760,12 @@ function placeNetlabelNodes() {
     return;
   }
 
-  const MIN_LABEL_GAP = 22;
+  const MIN_LABEL_GAP = 24;
+  const BAND_WIDTH = 120;
+  const BASE_CLEARANCE = 18;
+  const EXTRA_LANE_OFFSET = 22;
   const netlabelNodes = state.cy.nodes('[kind = "netlabel_node"]');
 
-  // First pass: compute ideal positions for each netlabel
   const placements = [];
   netlabelNodes.forEach((node) => {
     const portId = node.data("connected_port");
@@ -1711,41 +1792,60 @@ function placeNetlabelNodes() {
     const labelWidth = node.data("label_width") || 50;
     placements.push({
       node,
-      x: portPos.x + side * (labelWidth / 2 + 14),
-      y: portPos.y,
+      portX: portPos.x,
+      portY: portPos.y,
+      idealY: portPos.y,
       side,
+      labelWidth,
+      band: `${side}:${Math.round(portPos.x / BAND_WIDTH)}`,
+      lane: 0,
+      x: portPos.x + side * (labelWidth / 2 + BASE_CLEARANCE),
+      y: portPos.y,
     });
   });
 
-  // Second pass: group by approximate X band and deconflict Y positions
-  // Sort by X then Y so nearby labels get spread apart
-  placements.sort((a, b) => {
-    const xBandA = Math.round(a.x / 80);
-    const xBandB = Math.round(b.x / 80);
-    if (xBandA !== xBandB) return xBandA - xBandB;
-    return a.y - b.y;
-  });
-
-  // Deconflict: within each X band, ensure minimum vertical gap
-  let prevXBand = null;
-  let prevY = -Infinity;
-  for (const p of placements) {
-    const xBand = Math.round(p.x / 80);
-    if (xBand !== prevXBand) {
-      prevXBand = xBand;
-      prevY = -Infinity;
+  const groups = new Map();
+  for (const placement of placements) {
+    if (!groups.has(placement.band)) {
+      groups.set(placement.band, []);
     }
-    if (p.y - prevY < MIN_LABEL_GAP) {
-      p.y = prevY + MIN_LABEL_GAP;
-    }
-    prevY = p.y;
+    groups.get(placement.band).push(placement);
   }
 
-  // Apply positions
-  for (const p of placements) {
-    p.node.position({
-      x: snapToGrid(p.x),
-      y: snapToGrid(p.y),
+  groups.forEach((group) => {
+    group.sort((a, b) => a.idealY - b.idealY);
+
+    const occupied = [];
+    group.forEach((placement) => {
+      let candidateY = placement.idealY;
+      let candidateLane = 0;
+
+      for (;;) {
+        const conflict = occupied.find((slot) => Math.abs(slot.y - candidateY) < MIN_LABEL_GAP);
+        if (!conflict) {
+          break;
+        }
+
+        candidateLane = Math.max(candidateLane, conflict.lane + 1);
+        const direction = conflict.y <= placement.idealY ? 1 : -1;
+        candidateY = placement.idealY + direction * candidateLane * MIN_LABEL_GAP;
+      }
+
+      placement.lane = candidateLane;
+      placement.y = candidateY;
+      occupied.push({ y: candidateY, lane: candidateLane });
+      occupied.sort((left, right) => left.y - right.y);
+    });
+
+    group.forEach((placement) => {
+      placement.x = placement.portX + placement.side * (placement.labelWidth / 2 + BASE_CLEARANCE + placement.lane * EXTRA_LANE_OFFSET);
+    });
+  });
+
+  for (const placement of placements) {
+    placement.node.position({
+      x: snapToGrid(placement.x),
+      y: snapToGrid(placement.y),
     });
   }
 }
@@ -2128,6 +2228,10 @@ function renderInspector() {
       <div><span class="k">Signal class:</span> ${escapeHtml(state.selectedEdge.sig_class || "wire")}</div>
       <div><span class="k">Bit width:</span> ${escapeHtml(widthText)}</div>
       <div><span class="k">Net count:</span> ${state.selectedEdge.net_count || 1}</div>
+
+      <div><span class="k">Display mode:</span> ${escapeHtml(state.selectedEdge.routing_mode || "direct")}</div>
+
+      <div><span class="k">Why:</span> ${escapeHtml(state.selectedEdge.routing_reason || "Direct connection rendering.")}</div>
     `;
   }
 
@@ -2183,7 +2287,7 @@ function renderGraph(rawGraph) {
     port_view: state.portView,
     schematic_mode: state.schematicMode,
     interpretation: {
-      note: "This view focuses on module-internal wiring between instances and module I/O.",
+      note: "Short local datapath links are traced. Long-span, feedback, global control, and dense scalar bundles are shown by shared net name.",
       drilldown: "Double-click instance node to open that child module connectivity view.",
     },
     node_kind_counts: nodeCounts,
@@ -2437,5 +2541,6 @@ renderInspector();
     setStatus("API unavailable", "error");
   }
 })();
+
 
 
