@@ -476,8 +476,8 @@ function ensureCytoscape() {
         style: {
           "background-color": "#c77724",
           "border-color": "#5a3208",
-          "text-halign": "right",
-          "text-margin-x": 17,
+          "text-halign": "left",
+          "text-margin-x": -17,
           color: "#d8b17e",
         },
       },
@@ -516,7 +516,7 @@ function ensureCytoscape() {
           "text-valign": "center",
           "text-halign": "center",
           "text-wrap": "ellipsis",
-          "text-max-width": 130,
+          "text-max-width": 92,
           "border-width": 2,
           "border-color": "#2e7aaa",
         },
@@ -535,6 +535,25 @@ function ensureCytoscape() {
           "background-color": "#0e2c1a",
           "border-color": "#2a7a40",
           color: "#70e0a0",
+        },
+      },
+      {
+        selector: 'node[kind = "module_io_tip_label"]',
+        style: {
+          shape: "roundrectangle",
+          width: "data(label_width)",
+          height: 18,
+          "background-color": "#12210f",
+          "border-width": 1,
+          "border-color": "#45652d",
+          label: "data(label)",
+          "font-size": 9,
+          "font-family": "monospace",
+          "font-weight": "bold",
+          color: "#8ccf72",
+          "text-valign": "center",
+          "text-halign": "center",
+          events: "no",
         },
       },
       {
@@ -1168,6 +1187,20 @@ function buildPortViewCyElements(graph) {
         ...(composedLabel ? { label: composedLabel } : {}),
       },
     });
+
+    if (node.kind === "module_io") {
+      elements.push({
+        data: {
+          id: `module-io-label:${node.id}`,
+          kind: "module_io_tip_label",
+          label: node.port_name || node.label || node.id,
+          label_width: Math.max(56, String(node.port_name || node.label || node.id).length * 8 + 16),
+          anchor_for: node.id,
+          direction: String(node.direction || "unknown").toLowerCase(),
+          port_view: 1,
+        },
+      });
+    }
   }
 
   const portStubNodes = (graph.nodes || []).filter((node) => {
@@ -1877,6 +1910,30 @@ function placeNetlabelNodes() {
   }
 }
 
+function placeModuleIoTipLabels() {
+  if (!state.cy) {
+    return;
+  }
+
+  state.cy.nodes('[kind = "module_io_tip_label"]').forEach((labelNode) => {
+    const anchorId = labelNode.data("anchor_for");
+    const anchorNode = state.cy.getElementById(anchorId);
+    if (!anchorNode || anchorNode.empty()) {
+      return;
+    }
+
+    const direction = String(labelNode.data("direction") || "unknown").toLowerCase();
+    const side = direction === "output" ? -1 : 1;
+    const halfWidth = Math.max(40, anchorNode.outerWidth() / 2);
+    const labelWidth = labelNode.data("label_width") || 56;
+
+    labelNode.position({
+      x: snapToGrid(anchorNode.position("x") + side * (halfWidth + labelWidth / 2 - 6)),
+      y: snapToGrid(anchorNode.position("y")),
+    });
+  });
+}
+
 function placeModuleIoNodes(graph, leftX, rightX) {
   if (!state.cy) {
     return;
@@ -1937,6 +1994,7 @@ function placeModuleIoNodes(graph, leftX, rightX) {
   placeList(inputNodes, leftX, 120);
   placeList(outputNodes, rightX, 120);
   placeList(unknownNodes, leftX, 120 + inputNodes.length * IO_ROW_GAP + LAYOUT_GRID);
+  placeModuleIoTipLabels();
 
   const centerY = snapToGrid((cyGraph.clientHeight || 760) / 2);
   spreadNodesVertically(inputNodes, LAYOUT_GRID, centerY);
