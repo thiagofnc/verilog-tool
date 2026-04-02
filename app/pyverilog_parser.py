@@ -17,9 +17,12 @@ from pyverilog.vparser.ast import (
     AlwaysFF,
     AlwaysLatch,
     Assign,
+    Block,
     BlockingSubstitution,
+    Cond,
     Decl,
     Identifier,
+    IfStatement,
     Inout,
     Input,
     InstanceList,
@@ -28,18 +31,19 @@ from pyverilog.vparser.ast import (
     ModuleDef as PVModuleDef,
     NonblockingSubstitution,
     Output,
+    Ulnot,
 )
 from pyverilog.vparser.parser import VerilogParser
 
 try:
     from app.models import (
-        AlwaysBlock, ContinuousAssign, GatePrimitive,
+        AlwaysAssignment, AlwaysBlock, ContinuousAssign, GatePrimitive,
         Instance, ModuleDef, PinConnection, Port, Project, Signal, SourceFile,
     )
     from app.parser_base import VerilogParserBackend
 except ImportError:  # Supports running as: python app/main.py
     from models import (
-        AlwaysBlock, ContinuousAssign, GatePrimitive,
+        AlwaysAssignment, AlwaysBlock, ContinuousAssign, GatePrimitive,
         Instance, ModuleDef, PinConnection, Port, Project, Signal, SourceFile,
     )
     from parser_base import VerilogParserBackend
@@ -221,6 +225,53 @@ def _parse_assigns(module: PVModuleDef, codegen: ASTCodeGenerator, known_signals
     return assigns
 
 
+def _walk_always_assignments(
+    node: object,
+    codegen: ASTCodeGenerator,
+    known_signals: set[str],
+    condition: str = "",
+) -> list[AlwaysAssignment]:
+    """Recursively walk an always-block AST subtree and extract individual assignments."""
+    results: list[AlwaysAssignment] = []
+
+    if isinstance(node, IfStatement):
+        cond_text = _expr_to_text(node.cond, codegen)
+        # true branch
+        if node.true_statement is not None:
+            results.extend(_walk_always_assignments(node.true_statement, codegen, known_signals, cond_text))
+        # false branch
+        if node.false_statement is not None:
+            neg_cond = f"!({cond_text})"
+            results.extend(_walk_always_assignments(node.false_statement, codegen, known_signals, neg_cond))
+        return results
+
+    if isinstance(node, (BlockingSubstitution, NonblockingSubstitution)):
+        lv = getattr(node, "left", None)
+        rv = getattr(node, "right", None)
+        if lv is not None and rv is not None:
+            target = _expr_to_text(lv, codegen)
+            expression = _expr_to_text(rv, codegen)
+            target_base = target.split("[")[0].strip()
+            if target_base in known_signals:
+                src_idents = [n for n in _collect_identifiers_from_ast(rv) if n in known_signals]
+                seen: set[str] = set()
+                deduped = [s for s in src_idents if not (s in seen or seen.add(s))]  # type: ignore[func-returns-value]
+                results.append(AlwaysAssignment(
+                    target=target,
+                    expression=expression,
+                    condition=condition,
+                    blocking=isinstance(node, BlockingSubstitution),
+                    source_signals=deduped,
+                ))
+        return results
+
+    # Recurse into child nodes (Block, etc.)
+    for child in getattr(node, "children", lambda: [])():
+        results.extend(_walk_always_assignments(child, codegen, known_signals, condition))
+
+    return results
+
+
 def _parse_always_blocks(module: PVModuleDef, codegen: ASTCodeGenerator, known_signals: set[str]) -> list[AlwaysBlock]:
     """Parse always blocks from the AST."""
     blocks: list[AlwaysBlock] = []
@@ -245,7 +296,7 @@ def _parse_always_blocks(module: PVModuleDef, codegen: ASTCodeGenerator, known_s
 
         # Collect written signals from assignment nodes in the AST subtree.
         written: list[str] = []
-        def _walk_for_assignments(node: object) -> None:
+        def _walk_for_written(node: object) -> None:
             if isinstance(node, (BlockingSubstitution, NonblockingSubstitution)):
                 lv = getattr(node, "left", None)
                 if lv is not None:
@@ -253,13 +304,16 @@ def _parse_always_blocks(module: PVModuleDef, codegen: ASTCodeGenerator, known_s
                         if name in known_signals and name not in written:
                             written.append(name)
             for child in getattr(node, "children", lambda: [])():
-                _walk_for_assignments(child)
+                _walk_for_written(child)
 
-        _walk_for_assignments(item)
+        _walk_for_written(item)
 
         # Collect all identifiers referenced in the body, excluding written ones.
         all_idents = _extract_identifiers(body_text, known_signals)
         read = [n for n in all_idents if n not in written]
+
+        # Extract individual assignments with condition context.
+        assignments = _walk_always_assignments(item, codegen, known_signals)
 
         blocks.append(AlwaysBlock(
             name=f"{kind}_{counter}",
@@ -267,6 +321,7 @@ def _parse_always_blocks(module: PVModuleDef, codegen: ASTCodeGenerator, known_s
             kind=kind,
             written_signals=written,
             read_signals=read,
+            assignments=assignments,
         ))
         counter += 1
 

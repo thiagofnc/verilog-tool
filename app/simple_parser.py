@@ -16,13 +16,13 @@ from pathlib import Path
 
 try:
     from app.models import (
-        AlwaysBlock, ContinuousAssign, GatePrimitive,
+        AlwaysAssignment, AlwaysBlock, ContinuousAssign, GatePrimitive,
         Instance, ModuleDef, PinConnection, Port, Project, Signal, SourceFile,
     )
     from app.parser_base import VerilogParserBackend
 except ImportError:  # Supports running as: python app/main.py
     from models import (
-        AlwaysBlock, ContinuousAssign, GatePrimitive,
+        AlwaysAssignment, AlwaysBlock, ContinuousAssign, GatePrimitive,
         Instance, ModuleDef, PinConnection, Port, Project, Signal, SourceFile,
     )
     from parser_base import VerilogParserBackend
@@ -77,6 +77,12 @@ ALWAYS_START_RE = re.compile(
 
 # Extracts identifiers from expressions (for signal reference analysis).
 _IDENT_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_$]*)\b")
+
+# Matches nonblocking (<=) and blocking (=) assignments inside always blocks.
+# Group 1: target, Group 2: '<' if nonblocking, Group 3: RHS expression.
+_ALWAYS_ASSIGN_RE = re.compile(
+    r"([A-Za-z_][A-Za-z0-9_$]*(?:\[[^\]]*\])?)\s*(<)?=\s*([^;]+);",
+)
 
 KEYWORDS = {
     "if",
@@ -249,8 +255,66 @@ def _extract_balanced_block(text: str, start: int) -> str:
     return text[start:]
 
 
+def _extract_always_assignments(
+    body: str, port_names: set[str], signal_names: set[str],
+) -> list[AlwaysAssignment]:
+    """Extract individual assignment statements from an always block body.
+
+    Tracks enclosing ``if`` condition context so we can show it on each assignment.
+    """
+    known = port_names | signal_names
+    assignments: list[AlwaysAssignment] = []
+
+    # Build a simple condition stack by scanning for if/else before each assignment.
+    condition_stack: list[str] = []
+    # Walk lines to track if/else context.
+    lines = body.split("\n")
+    current_condition = ""
+    for line in lines:
+        stripped = line.strip()
+
+        # Track if conditions.
+        if_match = re.match(r"if\s*\((.+?)\)", stripped)
+        else_if_match = re.match(r"end\s+else\s+if\s*\((.+?)\)", stripped)
+        if else_if_match:
+            current_condition = " ".join(else_if_match.group(1).split())
+        elif if_match:
+            condition_stack.append(" ".join(if_match.group(1).split()))
+            current_condition = condition_stack[-1]
+        elif re.match(r"(end\s+)?else\b", stripped):
+            current_condition = f"!({condition_stack[-1]})" if condition_stack else ""
+        elif stripped == "end" and condition_stack:
+            condition_stack.pop()
+            current_condition = condition_stack[-1] if condition_stack else ""
+
+        # Look for assignments on this line.
+        for m in _ALWAYS_ASSIGN_RE.finditer(stripped):
+            target = m.group(1).strip()
+            is_nonblocking = m.group(2) == "<"
+            expr = " ".join(m.group(3).split())
+
+            # Validate the target is a known signal.
+            target_base = re.match(r"([A-Za-z_][A-Za-z0-9_$]*)", target)
+            if not target_base or target_base.group(1) not in known:
+                continue
+            if target_base.group(1) in _EXPR_IGNORE:
+                continue
+
+            source_sigs = _extract_signal_names(expr, port_names, signal_names)
+
+            assignments.append(AlwaysAssignment(
+                target=target,
+                expression=expr,
+                condition=current_condition,
+                blocking=not is_nonblocking,
+                source_signals=source_sigs,
+            ))
+
+    return assignments
+
+
 def _parse_always_blocks(module_body: str, port_names: set[str], signal_names: set[str]) -> list[AlwaysBlock]:
-    """Parse always blocks, extracting read and written signals."""
+    """Parse always blocks, extracting read and written signals and individual assignments."""
     blocks: list[AlwaysBlock] = []
     known = port_names | signal_names
 
@@ -276,12 +340,16 @@ def _parse_always_blocks(module_body: str, port_names: set[str], signal_names: s
         all_idents = _extract_signal_names(body_clean, port_names, signal_names)
         read = [name for name in all_idents if name not in written]
 
+        # Extract individual assignments with their condition context.
+        assignments = _extract_always_assignments(body_clean, port_names, signal_names)
+
         blocks.append(AlwaysBlock(
             name=f"{kind}_{index}",
             sensitivity=sensitivity,
             kind=kind,
             written_signals=written,
             read_signals=read,
+            assignments=assignments,
         ))
 
     return blocks

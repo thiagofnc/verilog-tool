@@ -588,12 +588,12 @@ function ensureCytoscape() {
       {
         selector: 'node[kind = "assign"]',
         style: {
-          "background-color": "#2a1a3a",
+          "background-color": "#1e1230",
           shape: "roundrectangle",
-          width: 120,
-          height: 36,
+          width: 180,
+          height: 32,
           "border-width": 2,
-          "border-color": "#a070d0",
+          "border-color": "#9060c0",
           label: "data(label)",
           "font-size": 9,
           "font-weight": "bold",
@@ -601,29 +601,50 @@ function ensureCytoscape() {
           color: "#c8a0e8",
           "text-valign": "center",
           "text-halign": "center",
-          "text-wrap": "wrap",
-          "text-max-width": 110,
+          "text-wrap": "ellipsis",
+          "text-max-width": 170,
         },
       },
       {
         selector: 'node[kind = "always"]',
         style: {
-          "background-color": "#2a2a10",
-          shape: "rectangle",
-          width: 160,
-          height: 48,
-          "border-width": 2,
-          "border-color": "#c0a040",
+          "background-color": "#1a1a08",
+          "background-opacity": 0.85,
+          shape: "roundrectangle",
+          "border-width": 2.5,
+          "border-color": "#9a8030",
           "border-style": "double",
           label: "data(label)",
           "font-size": 9,
           "font-weight": "bold",
           "font-family": "monospace",
-          color: "#e0d080",
+          color: "#c8b860",
+          "text-valign": "top",
+          "text-halign": "center",
+          "text-margin-y": 8,
+          "text-wrap": "wrap",
+          "text-max-width": 260,
+          "padding": "16px",
+          "compound-sizing-wrt-labels": "include",
+        },
+      },
+      {
+        selector: 'node[kind = "always_assign"]',
+        style: {
+          "background-color": "#28280e",
+          shape: "roundrectangle",
+          width: 180,
+          height: 28,
+          "border-width": 1.5,
+          "border-color": "#807020",
+          label: "data(label)",
+          "font-size": 8.5,
+          "font-family": "monospace",
+          color: "#d8c878",
           "text-valign": "center",
           "text-halign": "center",
-          "text-wrap": "wrap",
-          "text-max-width": 150,
+          "text-wrap": "ellipsis",
+          "text-max-width": 170,
         },
       },
       {
@@ -961,8 +982,9 @@ function ensureCytoscape() {
     const widthHint = data.bit_width && data.bit_width > 1 ? ` | bus [${data.bit_width}]` : data.is_bus ? " | bus" : " | wire";
     const drillHint = data.kind === "instance" ? '<div class="kind">Double-click to drill into module</div>' : "";
     const extraHint = data.kind === "gate" ? `<div class="kind">Gate type: ${escapeHtml(data.gate_type)}</div>`
-      : data.kind === "assign" ? `<div class="kind">expr: ${escapeHtml(data.expression || "")}</div>`
+      : data.kind === "assign" ? `<div class="kind">${escapeHtml(data.target_signal || "")} = ${escapeHtml(data.expression || "")}</div>`
       : data.kind === "always" ? `<div class="kind">sensitivity: @(${escapeHtml(data.sensitivity || "")})</div>`
+      : data.kind === "always_assign" ? `<div class="kind">${escapeHtml(data.target_signal || "")} ${escapeHtml(data.operator || "<=")} ${escapeHtml(data.expression || "")}</div>${data.condition ? `<div class="kind">when: ${escapeHtml(data.condition)}</div>` : ""}`
       : "";
     hoverTooltip.innerHTML = `
       <div>${escapeHtml(data.label || data.id)}</div>
@@ -2418,8 +2440,9 @@ function renderInspector() {
       <div><span class="k">Connected edges:</span> ${connected}</div>
       ${state.selectedNode.kind === "instance" ? `<div><span class="k">Double-click behavior:</span> Open instance module graph</div>` : ""}
       ${state.selectedNode.kind === "gate" ? `<div><span class="k">Gate type:</span> ${escapeHtml(state.selectedNode.gate_type || "")}</div>` : ""}
-      ${state.selectedNode.kind === "assign" ? `<div><span class="k">Expression:</span> ${escapeHtml(state.selectedNode.expression || "")}</div>` : ""}
+      ${state.selectedNode.kind === "assign" ? `<div><span class="k">Target:</span> ${escapeHtml(state.selectedNode.target_signal || "")}</div><div><span class="k">Expression:</span> ${escapeHtml(state.selectedNode.expression || "")}</div>` : ""}
       ${state.selectedNode.kind === "always" ? `<div><span class="k">Block type:</span> ${escapeHtml(state.selectedNode.always_kind || "always")}</div><div><span class="k">Sensitivity:</span> @(${escapeHtml(state.selectedNode.sensitivity || "")})</div>` : ""}
+      ${state.selectedNode.kind === "always_assign" ? `<div><span class="k">Target:</span> ${escapeHtml(state.selectedNode.target_signal || "")}</div><div><span class="k">Expression:</span> ${escapeHtml(state.selectedNode.expression || "")}</div>${state.selectedNode.condition ? `<div><span class="k">Condition:</span> ${escapeHtml(state.selectedNode.condition)}</div>` : ""}` : ""}
     `;
   } else if (state.selectedEdge) {
     const netInfo = state.selectedEdge.nets?.length

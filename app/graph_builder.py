@@ -5,9 +5,9 @@ import re
 from typing import Any
 
 try:
-    from app.models import AlwaysBlock, ContinuousAssign, GatePrimitive, Instance, ModuleDef, Port, Project, Signal
+    from app.models import AlwaysAssignment, AlwaysBlock, ContinuousAssign, GatePrimitive, Instance, ModuleDef, Port, Project, Signal
 except ImportError:  # Supports running as: python app/main.py
-    from models import AlwaysBlock, ContinuousAssign, GatePrimitive, Instance, ModuleDef, Port, Project, Signal
+    from models import AlwaysAssignment, AlwaysBlock, ContinuousAssign, GatePrimitive, Instance, ModuleDef, Port, Project, Signal
 
 
 GRAPH_SCHEMA_VERSION = "1.0"
@@ -574,7 +574,7 @@ def build_module_connectivity_graph(
                 }
             )
 
-    # Continuous assign nodes.
+    # Continuous assign nodes — show full expression.
     for idx, assign in enumerate(getattr(module_def, "assigns", None) or []):
         assign_id = f"assign:{idx}:{assign.target}"
         target_base = _parse_signal_reference(assign.target).get("base_name") or assign.target
@@ -583,7 +583,7 @@ def build_module_connectivity_graph(
         add_node(
             {
                 "id": assign_id,
-                "label": f"assign {assign.target}",
+                "label": f"{assign.target} = {assign.expression}",
                 "kind": "assign",
                 "expression": assign.expression,
                 "target_signal": assign.target,
@@ -616,11 +616,11 @@ def build_module_connectivity_graph(
                 }
             )
 
-    # Always block nodes.
+    # Always block nodes — compound parent with individual assignment children.
     for block in getattr(module_def, "always_blocks", None) or []:
         block_id = f"always:{block.name}"
         kind_label = block.kind.replace("_", " ")
-        sens_short = block.sensitivity[:30] + "..." if len(block.sensitivity) > 30 else block.sensitivity
+        sens_short = block.sensitivity[:40] + "..." if len(block.sensitivity) > 40 else block.sensitivity
         add_node(
             {
                 "id": block_id,
@@ -632,35 +632,98 @@ def build_module_connectivity_graph(
             }
         )
 
-        # Written signals: the always block drives these.
-        for sig_name in block.written_signals:
-            sig_base = _parse_signal_reference(sig_name).get("base_name") or sig_name
-            sig_info = signal_lookup.get(sig_base, {})
-            attachments_by_signal[sig_base].append(
-                {
-                    "node_id": block_id,
-                    "endpoint_kind": "always_out",
-                    "port_name": sig_name,
-                    "direction": "output",
-                    "bit_width": sig_info.get("bit_width"),
-                    "is_bus": sig_info.get("is_bus", False),
-                }
-            )
+        assignments = getattr(block, "assignments", None) or []
+        if assignments:
+            # Deduplicate: group assignments by target and merge under the
+            # non-reset condition to produce one node per target.
+            target_groups: dict[str, list] = defaultdict(list)
+            for asgn in assignments:
+                target_groups[asgn.target].append(asgn)
 
-        # Read signals: the always block consumes these.
-        for sig_name in block.read_signals:
-            sig_base = _parse_signal_reference(sig_name).get("base_name") or sig_name
-            sig_info = signal_lookup.get(sig_base, {})
-            attachments_by_signal[sig_base].append(
-                {
-                    "node_id": block_id,
-                    "endpoint_kind": "always_in",
-                    "port_name": sig_name,
-                    "direction": "input",
-                    "bit_width": sig_info.get("bit_width"),
-                    "is_bus": sig_info.get("is_bus", False),
-                }
-            )
+            for asgn_idx, (target, asgn_list) in enumerate(target_groups.items()):
+                # Prefer the non-reset assignment (the "active" one) for display.
+                active = [a for a in asgn_list if a.condition.startswith("!(")]
+                display = active[0] if active else asgn_list[-1]
+                op = "=" if display.blocking else "<="
+                cond_tag = f"  if {display.condition}" if display.condition else ""
+
+                child_id = f"always_asgn:{block.name}:{asgn_idx}:{target}"
+                add_node(
+                    {
+                        "id": child_id,
+                        "label": f"{target} {op} {display.expression}",
+                        "kind": "always_assign",
+                        "parent": block_id,
+                        "target_signal": target,
+                        "expression": display.expression,
+                        "condition": display.condition,
+                        "operator": op,
+                    }
+                )
+
+                # Collect all source signals across all conditions for this target.
+                all_sources: list[str] = []
+                for a in asgn_list:
+                    for s in a.source_signals:
+                        if s not in all_sources:
+                            all_sources.append(s)
+
+                # Output: this child drives the target signal.
+                target_base = _parse_signal_reference(target).get("base_name") or target
+                sig_info = signal_lookup.get(target_base, {})
+                attachments_by_signal[target_base].append(
+                    {
+                        "node_id": child_id,
+                        "endpoint_kind": "always_out",
+                        "port_name": target,
+                        "direction": "output",
+                        "bit_width": sig_info.get("bit_width"),
+                        "is_bus": sig_info.get("is_bus", False),
+                    }
+                )
+
+                # Inputs: sources feeding this assignment.
+                for src in all_sources:
+                    src_base = _parse_signal_reference(src).get("base_name") or src
+                    attachments_by_signal[src_base].append(
+                        {
+                            "node_id": child_id,
+                            "endpoint_kind": "always_in",
+                            "port_name": src,
+                            "direction": "input",
+                            "bit_width": signal_lookup.get(src_base, {}).get("bit_width"),
+                            "is_bus": signal_lookup.get(src_base, {}).get("is_bus", False),
+                        }
+                    )
+        else:
+            # Fallback: no detailed assignments available, use bulk read/write.
+            for sig_name in block.written_signals:
+                sig_base = _parse_signal_reference(sig_name).get("base_name") or sig_name
+                sig_info = signal_lookup.get(sig_base, {})
+                attachments_by_signal[sig_base].append(
+                    {
+                        "node_id": block_id,
+                        "endpoint_kind": "always_out",
+                        "port_name": sig_name,
+                        "direction": "output",
+                        "bit_width": sig_info.get("bit_width"),
+                        "is_bus": sig_info.get("is_bus", False),
+                    }
+                )
+
+            for sig_name in block.read_signals:
+                sig_base = _parse_signal_reference(sig_name).get("base_name") or sig_name
+                sig_info = signal_lookup.get(sig_base, {})
+                attachments_by_signal[sig_base].append(
+                    {
+                        "node_id": block_id,
+                        "endpoint_kind": "always_in",
+                        "port_name": sig_name,
+                        "direction": "input",
+                        "bit_width": sig_info.get("bit_width"),
+                        "is_bus": sig_info.get("is_bus", False),
+                    }
+                )
 
     if mode == "detailed":
         for signal_name in sorted(attachments_by_signal):

@@ -106,6 +106,16 @@ class ContinuousAssign:
 
 
 @dataclass
+class AlwaysAssignment:
+    """One assignment statement inside an always block."""
+    target: str                 # LHS signal name
+    expression: str             # RHS expression text
+    condition: str = ""         # enclosing if-condition context, e.g. "rst", "!rst"
+    blocking: bool = False      # True for '=', False for '<='
+    source_signals: list[str] = field(default_factory=list)
+
+
+@dataclass
 class AlwaysBlock:
     """An always block with its sensitivity list and read/written signals."""
     name: str  # auto-generated identifier (always_0, always_1, ...)
@@ -113,6 +123,7 @@ class AlwaysBlock:
     kind: str = "always"  # always, always_ff, always_comb, always_latch
     written_signals: list[str] = field(default_factory=list)
     read_signals: list[str] = field(default_factory=list)
+    assignments: list[AlwaysAssignment] = field(default_factory=list)
 
 
 @dataclass

@@ -402,6 +402,53 @@ def _build_port_layout(
             "height": block.height,
         }
 
+    # Internal logic nodes (gate, assign, always) can appear as edge endpoints.
+    _LOGIC_KINDS = {"gate", "assign", "always"}
+    for block in blocks.values():
+        if block.kind not in _LOGIC_KINDS:
+            continue
+        if block.node_id in layout_by_port:
+            continue
+        layout_by_port[block.node_id] = {
+            "id": block.node_id,
+            "kind": block.kind,
+            "x": block.x,
+            "y": block.y,
+            "side": "left",
+            "label": block.label,
+            "label_visible": True,
+            "direction": "unknown",
+            "is_bus": False,
+            "bit_width": None,
+            "width": block.width,
+            "height": block.height,
+        }
+
+    # always_assign children: place at their parent always block's position.
+    for node in graph["nodes"]:
+        if node.get("kind") != "always_assign":
+            continue
+        if node["id"] in layout_by_port:
+            continue
+        parent_id = node.get("parent", "")
+        parent_block = blocks.get(parent_id)
+        px = parent_block.x if parent_block else 0
+        py = parent_block.y if parent_block else 0
+        layout_by_port[node["id"]] = {
+            "id": node["id"],
+            "kind": "always_assign",
+            "x": px,
+            "y": py,
+            "side": "left",
+            "label": node.get("label", ""),
+            "label_visible": True,
+            "direction": "unknown",
+            "is_bus": False,
+            "bit_width": None,
+            "width": 120,
+            "height": 28,
+        }
+
     return layout_by_port
 
 
@@ -647,7 +694,7 @@ def build_schematic_connectivity_graph(project: Project, module_name: str, schem
 
     blocks: dict[str, _Block] = {}
     for node in graph["nodes"]:
-        if node.get("kind") == "instance_port":
+        if node.get("kind") in ("instance_port", "always_assign"):
             continue
         module_def = module_defs.get(str(node.get("module_name")))
         block = _Block(
