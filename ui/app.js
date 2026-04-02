@@ -1058,6 +1058,10 @@ function ensureCytoscape() {
         inspector.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
       }
     }
+
+    if (isDoubleTap && data.kind === "always") {
+      showAlwaysDetail(data);
+    }
   });
 
   state.cy.on("tap", "edge", (event) => {
@@ -2028,7 +2032,7 @@ function placeNetlabelNodes() {
   }
 
   const MIN_LABEL_GAP = 20;
-  const BASE_CLEARANCE = 14;
+  const BASE_CLEARANCE = 70;
   const EXTRA_LANE_OFFSET = 14;
   const netlabelNodes = state.cy.nodes('[kind = "netlabel_node"]');
 
@@ -2046,12 +2050,20 @@ function placeNetlabelNodes() {
     const role = String(node.data("netlabel_role") || "target");
 
     let side;
-    if (portDirection === "output") {
+    if (portKind === "module_io") {
+      // Module IO sides are inverted: inputs feed data rightward (label on right),
+      // outputs receive data from left (label on left)
+      if (portDirection === "input") {
+        side = 1;   // netlabel to the right of input port
+      } else if (portDirection === "output") {
+        side = -1;  // netlabel to the left of output port
+      } else {
+        side = portPos.x <= (cyGraph.clientWidth || 0) / 2 ? 1 : -1;
+      }
+    } else if (portDirection === "output") {
       side = 1;
     } else if (portDirection === "input") {
       side = -1;
-    } else if (portKind === "module_io") {
-      side = portPos.x <= (cyGraph.clientWidth || 0) / 2 ? -1 : 1;
     } else {
       side = -1;
     }
@@ -2467,17 +2479,33 @@ function applyPortViewBlockLayout(graph) {
   });
 
 
-  // Place internal logic nodes at the center column among instances.
-  if (logicNodes.length) {
+  // Separate assign nodes from other logic nodes (gates, always blocks).
+  const assignNodes = logicNodes.filter('[kind = "assign"]');
+  const otherLogicNodes = logicNodes.filter('[kind = "gate"], [kind = "always"]');
+
+  // Place gates and always blocks at a column after instances.
+  if (otherLogicNodes.length) {
     const canvasHeight = cyGraph.clientHeight || 760;
     const centerYLogic = snapToGrid(canvasHeight / 2);
     const lastLevel = Math.max(...[...levelByInstance.values()]);
     const logicX = snapToGrid(INSTANCE_COLUMN_START + (lastLevel + 1) * INSTANCE_COLUMN_STEP);
-    const rowGap = snapToGrid(logicNodes.length > 12 ? INSTANCE_ROW_GAP_DENSE : INSTANCE_ROW_GAP);
-    const totalHeight = Math.max(0, (logicNodes.length - 1) * rowGap);
+    const rowGap = snapToGrid(otherLogicNodes.length > 12 ? INSTANCE_ROW_GAP_DENSE : INSTANCE_ROW_GAP);
+    const totalHeight = Math.max(0, (otherLogicNodes.length - 1) * rowGap);
     const startY = snapToGrid(centerYLogic - totalHeight / 2);
-    logicNodes.forEach((node, idx) => {
+    otherLogicNodes.forEach((node, idx) => {
       node.position({ x: logicX, y: startY + idx * rowGap });
+    });
+  }
+
+  // Place assign nodes on the left, below the input ports.
+  if (assignNodes.length) {
+    const inputNodes = state.cy.nodes('[kind = "module_io"][direction = "input"]');
+    const inputPositions = inputNodes.map((node) => node.position("y"));
+    const inputBottomY = inputPositions.length ? Math.max(...inputPositions) + 80 : centerY;
+    const inputX = inputNodes.length ? inputNodes[0].position("x") : snapToGrid(INSTANCE_COLUMN_START - IO_COLUMN_MARGIN);
+    const rowGap = snapToGrid(assignNodes.length > 12 ? INSTANCE_ROW_GAP_DENSE : INSTANCE_ROW_GAP);
+    assignNodes.forEach((node, idx) => {
+      node.position({ x: inputX, y: snapToGrid(inputBottomY + idx * rowGap) });
     });
   }
   placeInstancePortNodes(graph);
@@ -2575,7 +2603,7 @@ function renderInspector() {
       ${state.selectedNode.kind === "instance" ? `<div><span class="k">Double-click behavior:</span> Open instance module graph</div>` : ""}
       ${state.selectedNode.kind === "gate" ? `<div><span class="k">Gate type:</span> ${escapeHtml(state.selectedNode.gate_type || "")}</div>` : ""}
       ${state.selectedNode.kind === "assign" ? `<div><span class="k">Target:</span> ${escapeHtml(state.selectedNode.target_signal || "")}</div><div><span class="k">Expression:</span> ${escapeHtml(state.selectedNode.expression || "")}</div>` : ""}
-      ${state.selectedNode.kind === "always" ? `<div><span class="k">Process type:</span> ${escapeHtml(state.selectedNode.process_style || state.selectedNode.always_kind || "always")}</div><div><span class="k">Sensitivity:</span> ${escapeHtml(state.selectedNode.sensitivity_title || state.selectedNode.title || (state.selectedNode.sensitivity ? `ALWAYS @(${state.selectedNode.sensitivity})` : "ALWAYS"))}</div><div><span class="k">Reads:</span> ${escapeHtml((state.selectedNode.read_signals || []).join(", ") || "-")}</div><div><span class="k">Writes:</span> ${escapeHtml((state.selectedNode.written_signals || []).join(", ") || "-")}</div><div><span class="k">Feedback:</span> ${escapeHtml((state.selectedNode.feedback_signals || []).join(", ") || "-")}</div>${(state.selectedNode.control_summary || []).length ? `<div><span class="k">Top-level control:</span><br>${escapeHtml(state.selectedNode.control_summary.join(" | "))}</div>` : ""}${(state.selectedNode.summary_lines || []).length ? `<div><span class="k">Assignments:</span><br>${escapeHtml(state.selectedNode.summary_lines.join(" | "))}</div>` : ""}` : ""}
+      ${state.selectedNode.kind === "always" ? `<div><span class="k">Process type:</span> ${escapeHtml(state.selectedNode.process_style || state.selectedNode.always_kind || "always")}</div><div><span class="k">Sensitivity:</span> ${escapeHtml(state.selectedNode.sensitivity_title || state.selectedNode.title || (state.selectedNode.sensitivity ? `ALWAYS @(${state.selectedNode.sensitivity})` : "ALWAYS"))}</div><div><span class="k">Reads:</span> ${escapeHtml((state.selectedNode.read_signals || []).join(", ") || "-")}</div><div><span class="k">Writes:</span> ${escapeHtml((state.selectedNode.written_signals || []).join(", ") || "-")}</div><div><span class="k">Feedback:</span> ${escapeHtml((state.selectedNode.feedback_signals || []).join(", ") || "-")}</div>${(state.selectedNode.control_summary || []).length ? `<div><span class="k">Top-level control:</span><br>${escapeHtml(state.selectedNode.control_summary.join(" | "))}</div>` : ""}${(state.selectedNode.summary_lines || []).length ? `<div><span class="k">Assignments:</span><br>${escapeHtml(state.selectedNode.summary_lines.join(" | "))}</div>` : ""}<div><span class="k">Double-click:</span> View detailed internals</div>` : ""}
       ${state.selectedNode.kind === "process_port" ? `<div><span class="k">Process pin:</span> ${escapeHtml(state.selectedNode.port_name || "")}</div><div><span class="k">Direction:</span> ${escapeHtml(state.selectedNode.direction || "unknown")}</div>` : ""}
     `;
   } else if (state.selectedEdge) {
@@ -2619,6 +2647,114 @@ function renderInspector() {
     <div><span class="k">Breadcrumb:</span><br>${escapeHtml(breadcrumbText)}</div>
     ${selectionBlock}
   `;
+}
+
+function showAlwaysDetail(data) {
+  const overlay = document.getElementById("alwaysDetailOverlay");
+  const titleEl = document.getElementById("alwaysDetailTitle");
+  const bodyEl = document.getElementById("alwaysDetailBody");
+  const closeBtn = document.getElementById("alwaysDetailClose");
+
+  const title = data.sensitivity_title || data.title || `ALWAYS @(${data.sensitivity || "*"})`;
+  const processStyle = data.process_style || "generic";
+  const styleLabels = { comb: "Combinational", seq: "Sequential", latch: "Latch", generic: "Generic" };
+
+  titleEl.textContent = `${styleLabels[processStyle] || processStyle} - ${data.block_name || data.label}`;
+
+  const readSignals = data.read_signals || [];
+  const writtenSignals = data.written_signals || [];
+  const feedbackSignals = data.feedback_signals || [];
+  const assignments = data.assignments || [];
+  const controlSummary = data.control_summary || [];
+
+  // Group assignments by condition
+  const conditionGroups = new Map();
+  for (const a of assignments) {
+    const cond = a.condition || "(unconditional)";
+    if (!conditionGroups.has(cond)) {
+      conditionGroups.set(cond, []);
+    }
+    conditionGroups.get(cond).push(a);
+  }
+
+  let html = "";
+
+  // Header info
+  html += `<div class="detail-section">
+    <div class="detail-section-title">Sensitivity</div>
+    <div>${escapeHtml(title)}</div>
+  </div>`;
+
+  // Signal summary
+  html += `<div class="detail-section">
+    <div class="detail-section-title">Input Signals (read only)</div>
+    <div>${readSignals.length ? readSignals.map((s) => `<span class="signal-chip">${escapeHtml(s)}</span>`).join("") : "<em>none</em>"}</div>
+  </div>`;
+
+  html += `<div class="detail-section">
+    <div class="detail-section-title">Output Signals (written only)</div>
+    <div>${writtenSignals.length ? writtenSignals.map((s) => `<span class="signal-chip output">${escapeHtml(s)}</span>`).join("") : "<em>none</em>"}</div>
+  </div>`;
+
+  if (feedbackSignals.length) {
+    html += `<div class="detail-section">
+      <div class="detail-section-title">Feedback Signals (read &amp; written)</div>
+      <div>${feedbackSignals.map((s) => `<span class="signal-chip feedback">${escapeHtml(s)}</span>`).join("")}</div>
+    </div>`;
+  }
+
+  // Control flow
+  if (controlSummary.length) {
+    html += `<div class="detail-section">
+      <div class="detail-section-title">Control Flow</div>
+      <div>${controlSummary.map((c) => escapeHtml(c)).join("<br>")}</div>
+    </div>`;
+  }
+
+  // Assignments grouped by condition
+  if (assignments.length) {
+    html += `<div class="detail-section">
+      <div class="detail-section-title">Assignments</div>`;
+
+    for (const [condition, assigns] of conditionGroups) {
+      if (condition !== "(unconditional)") {
+        html += `<div class="assign-condition">when ${escapeHtml(condition)}:</div>`;
+      } else if (conditionGroups.size > 1) {
+        html += `<div class="assign-condition">unconditional:</div>`;
+      }
+      for (const a of assigns) {
+        const op = a.blocking ? "=" : "&lt;=";
+        html += `<div class="assignment-row">
+          <span><span class="assign-target">${escapeHtml(a.target)}</span> <span class="assign-op">${op}</span></span>
+          <span class="assign-expr">${escapeHtml(a.expression)}</span>
+        </div>`;
+      }
+    }
+    html += `</div>`;
+  } else {
+    // Fallback to summary_lines if no structured assignments
+    const summaryLines = data.summary_lines || [];
+    if (summaryLines.length) {
+      html += `<div class="detail-section">
+        <div class="detail-section-title">Assignment Summary</div>
+        <div>${summaryLines.map((l) => escapeHtml(l)).join("<br>")}</div>
+      </div>`;
+    }
+  }
+
+  bodyEl.innerHTML = html;
+  overlay.classList.remove("hidden");
+
+  const closeHandler = () => {
+    overlay.classList.add("hidden");
+    closeBtn.removeEventListener("click", closeHandler);
+    overlay.removeEventListener("click", bgClickHandler);
+  };
+  const bgClickHandler = (e) => {
+    if (e.target === overlay) closeHandler();
+  };
+  closeBtn.addEventListener("click", closeHandler);
+  overlay.addEventListener("click", bgClickHandler);
 }
 
 function renderGraph(rawGraph) {

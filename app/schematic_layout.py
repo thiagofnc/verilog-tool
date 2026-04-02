@@ -312,14 +312,21 @@ def _assign_block_geometry(
         block.width = 220
         block.height = max(84, 54 + max_side * 24)
 
+    # Separate assign blocks from other blocks for special placement
+    assign_ids: list[str] = []
     for layer, node_ids in sorted(grouped_layers.items()):
         x = origin_x + layer * column_gap
-        for order, node_id in enumerate(node_ids):
+        non_assign_order = 0
+        for node_id in node_ids:
             block = blocks[node_id]
-            block.order = order
+            if block.kind == "assign":
+                assign_ids.append(node_id)
+                continue
+            block.order = non_assign_order
             block.x = _snap(x)
-            block.y = _snap(origin_y + order * row_gap)
+            block.y = _snap(origin_y + non_assign_order * row_gap)
             max_y = max(max_y, block.y + block.height)
+            non_assign_order += 1
 
     input_nodes = [block for block in blocks.values() if block.kind == "module_io" and block.direction == "input"]
     output_nodes = [block for block in blocks.values() if block.kind == "module_io" and block.direction == "output"]
@@ -329,6 +336,15 @@ def _assign_block_geometry(
     for index, block in enumerate(input_nodes):
         block.x = 100
         block.y = _snap(origin_y + index * 100)
+        max_y = max(max_y, block.y + block.height)
+
+    # Place assign blocks on the left side, below the inputs
+    input_bottom = origin_y + len(input_nodes) * 100 + 40
+    for index, node_id in enumerate(assign_ids):
+        block = blocks[node_id]
+        block.order = index
+        block.x = 100
+        block.y = _snap(input_bottom + index * row_gap)
         max_y = max(max_y, block.y + block.height)
 
     max_layer = max(grouped_layers.keys(), default=0)

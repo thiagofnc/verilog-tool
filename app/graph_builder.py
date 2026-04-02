@@ -644,6 +644,17 @@ def build_module_connectivity_graph(
         summary_lines = list(getattr(block, "summary_lines", None) or [])[:8]
         control_summary = list(getattr(block, "control_summary", None) or [])[:6]
 
+        assignments_data = [
+            {
+                "target": a.target,
+                "expression": a.expression,
+                "condition": a.condition,
+                "blocking": a.blocking,
+                "source_signals": list(a.source_signals),
+            }
+            for a in (getattr(block, "assignments", None) or [])
+        ]
+
         add_node(
             {
                 "id": block_id,
@@ -666,6 +677,7 @@ def build_module_connectivity_graph(
                 "feedback_signals": feedback_signals,
                 "control_summary": control_summary,
                 "summary_lines": summary_lines,
+                "assignments": assignments_data,
                 "collapsed": True,
                 "port_count": len(input_signals) + len(output_signals) + len(feedback_signals),
             }
