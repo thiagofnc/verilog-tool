@@ -1462,13 +1462,46 @@ function buildPortViewCyElements(graph) {
   });
 
   const classifyEdge = computeEdgeRoutingTypes(graph);
+
+  // --- Two-pass approach: detect ports with mixed modes and force netlabel ---
+  // Pass 1: classify all edges and track which target ports get which modes.
+  const edgeDecisions = (graph.edges || []).map((edge) => ({
+    edge,
+    decision: classifyEdge(edge),
+  }));
+
+  // Collect routing modes and edge count per target port.
+  const targetPortModes = new Map();
+  const targetPortEdgeCount = new Map();
+  edgeDecisions.forEach(({ edge, decision }) => {
+    const modes = targetPortModes.get(edge.target) || new Set();
+    modes.add(decision.mode);
+    targetPortModes.set(edge.target, modes);
+    targetPortEdgeCount.set(edge.target, (targetPortEdgeCount.get(edge.target) || 0) + 1);
+  });
+
+  // Force netlabel at a target port if:
+  // - It receives both netlabel and routed connections (mixed modes), OR
+  // - It receives connections from multiple different edges (multiple signals)
+  // This prevents a visible wire AND a net-label arriving at the same port.
+  const forceNetlabelTargets = new Set();
+  targetPortModes.forEach((modes, targetId) => {
+    if (modes.size > 1 || (targetPortEdgeCount.get(targetId) || 0) > 1) {
+      forceNetlabelTargets.add(targetId);
+    }
+  });
+
   const sourceNetlabels = new Map();
   const targetNetlabels = new Map();
 
-  (graph.edges || []).forEach((edge, index) => {
-    const routingDecision = classifyEdge(edge);
+  edgeDecisions.forEach(({ edge, decision }, index) => {
+    let routingType = decision.mode;
 
-    const routingType = routingDecision.mode;
+    // Override: if this target port already has a netlabel connection, force
+    // this edge to netlabel too so we don't get mixed wire+label at one port.
+    if (routingType === "routed" && forceNetlabelTargets.has(edge.target)) {
+      routingType = "netlabel";
+    }
 
     if (routingType === "netlabel") {
       const firstName = (edge.nets && edge.nets.length) ? edge.nets[0] : (edge.net || "?");
@@ -1493,7 +1526,7 @@ function buildPortViewCyElements(graph) {
             label_width: labelWidth,
             connected_port: edge.source,
             routing_mode: routingType,
-            routing_reason: routingDecision.reason,
+            routing_reason: decision.reason,
             port_view: 1,
           },
         });
@@ -1507,7 +1540,7 @@ function buildPortViewCyElements(graph) {
             netlabel_trace_group: traceGroup,
             port_view: 1,
             routing_mode: routingType,
-            routing_reason: routingDecision.reason,
+            routing_reason: decision.reason,
             sig_class: edge.sig_class || "wire",
             is_bus: edge.is_bus ? 1 : 0,
           },
@@ -1530,7 +1563,7 @@ function buildPortViewCyElements(graph) {
             label_width: labelWidth,
             connected_port: edge.target,
             routing_mode: routingType,
-            routing_reason: routingDecision.reason,
+            routing_reason: decision.reason,
             port_view: 1,
           },
         });
@@ -1544,7 +1577,7 @@ function buildPortViewCyElements(graph) {
             netlabel_trace_group: traceGroup,
             port_view: 1,
             routing_mode: routingType,
-            routing_reason: routingDecision.reason,
+            routing_reason: decision.reason,
             sig_class: edge.sig_class || "wire",
             is_bus: edge.is_bus ? 1 : 0,
           },
@@ -1562,7 +1595,7 @@ function buildPortViewCyElements(graph) {
       port_view: 1,
       route_segment: 1,
       routing_mode: routingType,
-      routing_reason: routingDecision.reason,
+      routing_reason: decision.reason,
       route_id: baseId,
       route_index: index,
     };
@@ -2391,6 +2424,46 @@ function placePortViewRoutes(graph) {
     return snapToGrid(centerX + side * 26 + signedOffset + instanceStagger, ROUTE_FANOUT_GAP);
   };
 
+  // Collect bounding boxes of all instance/logic blocks for overlap detection.
+  const instanceBoxes = [];
+  state.cy.nodes('[kind = "instance"], [kind = "gate"], [kind = "assign"], [kind = "always"]').forEach((node) => {
+    const pos = node.position();
+    const hw = Math.max(6, node.outerWidth() / 2);
+    const hh = Math.max(6, node.outerHeight() / 2);
+    instanceBoxes.push({
+      id: node.id(),
+      left: pos.x - hw,
+      top: pos.y - hh,
+      right: pos.x + hw,
+      bottom: pos.y + hh,
+    });
+  });
+
+  // Helper: does a horizontal or vertical segment cross a bounding box?
+  const segmentHitsBox = (x1, y1, x2, y2, box) => {
+    if (x1 === x2) { // vertical
+      const yLo = Math.min(y1, y2);
+      const yHi = Math.max(y1, y2);
+      return box.left < x1 && x1 < box.right && yLo < box.bottom && yHi > box.top;
+    }
+    // horizontal
+    const xLo = Math.min(x1, x2);
+    const xHi = Math.max(x1, x2);
+    return box.top < y1 && y1 < box.bottom && xLo < box.right && xHi > box.left;
+  };
+
+  // Map source/target ports to their parent instance for determining
+  // which instances a route is connected to.
+  const portToParent = new Map();
+  state.cy.nodes('[kind = "instance_port"], [kind = "process_port"]').forEach((node) => {
+    const parentId = node.data("instance_node_id") || node.data("parent_node_id") || node.data("process_node_id");
+    if (parentId) {
+      portToParent.set(node.id(), parentId);
+    }
+  });
+
+  const routesToConvert = [];
+
   routes.forEach((route) => {
     const side = route.forward ? 1 : -1;
     const sourceStubX = getStubX(route.sourceNode, side, route.sourceOffset || 0, route.instanceSourceOffset || 0);
@@ -2409,7 +2482,151 @@ function placePortViewRoutes(graph) {
         node.position(position);
       }
     });
+
+    // Only check routes that have anchor nodes (i.e. "routed" edges, not netlabel).
+    const anchorA = state.cy.getElementById(`route:${route.index}:a`);
+    if (!anchorA || anchorA.empty()) return;
+
+    // Check if the routed wire crosses any unconnected instance.
+    const connectedIds = new Set();
+    const srcParent = portToParent.get(route.sourceNode.id()) || route.sourceNode.id();
+    const tgtParent = portToParent.get(route.targetNode.id()) || route.targetNode.id();
+    connectedIds.add(srcParent);
+    connectedIds.add(tgtParent);
+
+    const segments = [
+      [points.a, points.b],
+      [points.b, points.c],
+      [points.c, points.d],
+    ];
+
+    let hitsUnconnected = false;
+    for (const [p1, p2] of segments) {
+      for (const box of instanceBoxes) {
+        if (connectedIds.has(box.id)) continue;
+        if (segmentHitsBox(p1.x, p1.y, p2.x, p2.y, box)) {
+          hitsUnconnected = true;
+          break;
+        }
+      }
+      if (hitsUnconnected) break;
+    }
+
+    if (hitsUnconnected) {
+      routesToConvert.push(route);
+    }
   });
+
+  // If any route crossing a module shares a target port with another route,
+  // convert those sibling routes too so we never mix wire + netlabel at one port.
+  if (routesToConvert.length) {
+    const convertTargets = new Set(routesToConvert.map((r) => r.edge.target));
+    routes.forEach((route) => {
+      const anchorCheck = state.cy.getElementById(`route:${route.index}:a`);
+      if (!anchorCheck || anchorCheck.empty()) return;
+      if (routesToConvert.includes(route)) return;
+      if (convertTargets.has(route.edge.target)) {
+        routesToConvert.push(route);
+      }
+    });
+  }
+
+  // Convert colliding routes to netlabels.
+  if (routesToConvert.length && state.cy) {
+    routesToConvert.forEach((route) => {
+      const baseId = `route:${route.index}`;
+      // Remove the route anchor nodes and segment edges.
+      ["a", "b", "c", "d"].forEach((suffix) => {
+        const node = state.cy.getElementById(`${baseId}:${suffix}`);
+        if (node && !node.empty()) {
+          node.connectedEdges().remove();
+          node.remove();
+        }
+      });
+      // Also remove the direct source→a and d→target edges.
+      for (let s = 0; s <= 4; s++) {
+        const seg = state.cy.getElementById(`${baseId}:seg${s}`);
+        if (seg && !seg.empty()) seg.remove();
+      }
+
+      // Add netlabel elements instead.
+      const edge = route.edge;
+      const firstName = (edge.nets && edge.nets.length) ? edge.nets[0] : (edge.net || "?");
+      const labelText = (edge.nets && edge.nets.length > 1)
+        ? `${firstName} +${edge.nets.length - 1}`
+        : firstName;
+      const labelWidth = Math.max(50, labelText.length * 7 + 14);
+      const traceGroup = `nettrace:${edge.source}:${firstName}`;
+
+      const srcLabelId = `netlabel:conv:${route.index}:src`;
+      const tgtLabelId = `netlabel:conv:${route.index}:tgt`;
+
+      state.cy.add([
+        {
+          group: "nodes",
+          data: {
+            id: srcLabelId,
+            kind: "netlabel_node",
+            net_label_text: labelText,
+            netlabel_group: firstName,
+            netlabel_trace_group: traceGroup,
+            netlabel_role: "source",
+            label_width: labelWidth,
+            connected_port: edge.source,
+            routing_mode: "netlabel",
+            routing_reason: "Converted: wire crossed unconnected module.",
+            port_view: 1,
+          },
+        },
+        {
+          group: "edges",
+          data: {
+            id: `${srcLabelId}:edge`,
+            source: edge.source,
+            target: srcLabelId,
+            kind: "connection",
+            netlabel_stub: 1,
+            netlabel_trace_group: traceGroup,
+            port_view: 1,
+            routing_mode: "netlabel",
+            sig_class: edge.sig_class || "wire",
+            is_bus: edge.is_bus ? 1 : 0,
+          },
+        },
+        {
+          group: "nodes",
+          data: {
+            id: tgtLabelId,
+            kind: "netlabel_node",
+            net_label_text: labelText,
+            netlabel_group: firstName,
+            netlabel_trace_group: traceGroup,
+            netlabel_role: "target",
+            label_width: labelWidth,
+            connected_port: edge.target,
+            routing_mode: "netlabel",
+            routing_reason: "Converted: wire crossed unconnected module.",
+            port_view: 1,
+          },
+        },
+        {
+          group: "edges",
+          data: {
+            id: `${tgtLabelId}:edge`,
+            source: tgtLabelId,
+            target: edge.target,
+            kind: "connection",
+            netlabel_stub: 1,
+            netlabel_trace_group: traceGroup,
+            port_view: 1,
+            routing_mode: "netlabel",
+            sig_class: edge.sig_class || "wire",
+            is_bus: edge.is_bus ? 1 : 0,
+          },
+        },
+      ]);
+    });
+  }
 }
 
 function applyPortViewBlockLayout(graph) {

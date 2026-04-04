@@ -520,6 +520,45 @@ def _route_metrics(polylines: list[list[dict[str, int]]], block_boxes: list[tupl
     return {"crossings": crossings, "bends": bends, "overlaps": overlaps}
 
 
+def _segment_hits_box(
+    seg_start: tuple[int, int],
+    seg_end: tuple[int, int],
+    box: tuple[int, int, int, int],
+) -> bool:
+    """Return True if a horizontal or vertical segment overlaps a bounding box."""
+    left, top, right, bottom = box
+    if seg_start[0] == seg_end[0]:  # vertical
+        x = seg_start[0]
+        y_lo = min(seg_start[1], seg_end[1])
+        y_hi = max(seg_start[1], seg_end[1])
+        return left < x < right and y_lo < bottom and y_hi > top
+    elif seg_start[1] == seg_end[1]:  # horizontal
+        y = seg_start[1]
+        x_lo = min(seg_start[0], seg_end[0])
+        x_hi = max(seg_start[0], seg_end[0])
+        return top < y < bottom and x_lo < right and x_hi > left
+    return False
+
+
+def _polylines_hit_unconnected(
+    polylines: list[list[dict[str, int]]],
+    block_boxes_by_id: dict[str, tuple[int, int, int, int]],
+    connected_block_ids: set[str],
+) -> bool:
+    """Return True if any segment in *polylines* passes through a block that is
+    not in *connected_block_ids*."""
+    for polyline in polylines:
+        for start, end in zip(polyline, polyline[1:]):
+            seg_start = (start["x"], start["y"])
+            seg_end = (end["x"], end["y"])
+            for block_id, box in block_boxes_by_id.items():
+                if block_id in connected_block_ids:
+                    continue
+                if _segment_hits_box(seg_start, seg_end, box):
+                    return True
+    return False
+
+
 def _build_routes(
     edges: list[dict[str, Any]],
     port_layout: dict[str, dict[str, Any]],
@@ -544,6 +583,25 @@ def _build_routes(
             group["sources"].append(edge["source"])
         if edge["target"] not in group["sinks"]:
             group["sinks"].append(edge["target"])
+
+    # Pre-compute block bounding boxes indexed by block id for overlap checks.
+    block_boxes_by_id: dict[str, tuple[int, int, int, int]] = {}
+    for block_id, block in blocks.items():
+        block_boxes_by_id[block_id] = (
+            block.x - block.width // 2,
+            block.y - block.height // 2,
+            block.x + block.width // 2,
+            block.y + block.height // 2,
+        )
+
+    # Map each port endpoint id to its parent block id.
+    port_to_block: dict[str, str] = {}
+    for port_id, port_info in port_layout.items():
+        parent = port_info.get("parent_id")
+        if parent:
+            port_to_block[port_id] = parent
+        else:
+            port_to_block[port_id] = port_id  # module_io nodes are their own block
 
     routes: list[dict[str, Any]] = []
     top_lane = 60
@@ -578,6 +636,17 @@ def _build_routes(
         fanout = len(sink_points)
         collapse = long_span or back_edge or fanout > 1
 
+        # Determine which blocks this signal connects to.
+        connected_block_ids: set[str] = set()
+        for src in group["sources"]:
+            bid = port_to_block.get(src)
+            if bid:
+                connected_block_ids.add(bid)
+        for snk in group["sinks"]:
+            bid = port_to_block.get(snk)
+            if bid:
+                connected_block_ids.add(bid)
+
         important_control = any(word in _normalize(label) for word in ("clk", "clock", "rst", "reset", "start", "busy", "valid", "ready"))
         if mode == "simplified" and not (is_bus or fanout > 1 or important_control):
             continue
@@ -599,7 +668,12 @@ def _build_routes(
             "sinks": group["sinks"],
         }
 
-        if collapse:
+        # --- helper: emit a collapsed (connection-by-name) route ----------------
+        def _emit_collapsed() -> None:
+            route["collapsed"] = True
+            route["polylines"].clear()
+            route["junctions"].clear()
+            route["labels"].clear()
             route["labels"].append({"x": source_point[0] + 14, "y": source_point[1] - 10, "text": label})
             for sink_id, sink_point in sink_points:
                 source_stub = {"x": source_point[0] + 28, "y": source_point[1]}
@@ -617,48 +691,90 @@ def _build_routes(
                     ]
                 )
                 route["labels"].append({"x": sink_stub["x"] - 8, "y": sink_stub["y"] - 10, "text": label})
+
+        if collapse:
+            _emit_collapsed()
             routes.append(route)
             all_polylines.extend(route["polylines"])
             continue
 
-        if is_control:
-            lane_y = top_lane + top_index * top_gap
-            top_index += 1
-        elif back_edge:
-            lane_y = bottom_lane - bottom_index * bottom_gap
-            bottom_index += 1
-        elif is_bus:
-            lane_y = bus_lane + bus_index * center_gap
-            bus_index += 1
-        else:
-            preferred_y = sum(point[1] for _, point in sink_points) / max(1, len(sink_points))
-            lane_y = max(center_lane + center_index * center_gap, _snap(preferred_y))
-            center_index += 1
-
-        trunk_start_x = _snap(source_point[0] + 36)
-        trunk_end_x = _snap(max(point[0] for _, point in sink_points) - 32) if sink_points else trunk_start_x + 40
-        trunk = [{"x": trunk_start_x, "y": _snap(lane_y)}, {"x": max(trunk_start_x + 20, trunk_end_x), "y": _snap(lane_y)}]
-
-        source_polyline = [
-            {"x": source_point[0], "y": source_point[1]},
-            {"x": trunk_start_x, "y": source_point[1]},
-            {"x": trunk_start_x, "y": _snap(lane_y)},
-        ]
-        route["polylines"].append(source_polyline)
-        route["polylines"].append(trunk)
-        route["labels"].append({"x": trunk_start_x + 10, "y": _snap(lane_y) - 10, "text": route["label"]})
-
-        for sink_id, sink_point in sink_points:
-            junction_x = _snap(sink_point[0] - 28)
-            junction = {"x": junction_x, "y": _snap(lane_y)}
-            route["junctions"].append(junction)
-            route["polylines"].append(
-                [
-                    {"x": junction_x, "y": _snap(lane_y)},
-                    {"x": junction_x, "y": sink_point[1]},
-                    {"x": sink_point[0], "y": sink_point[1]},
+        # --- Try direct routing for simple fanout-1 wires ---------------------
+        # If source and sink are close in Y and the straight path is clear,
+        # route with a simple L or straight line instead of the full lane path.
+        direct_routed = False
+        if fanout == 1 and not is_control and not is_bus:
+            sink_id, sink_point = sink_points[0]
+            dy = abs(source_point[1] - sink_point[1])
+            # Try a direct L-shaped or straight route.
+            mid_x = _snap((source_point[0] + sink_point[0]) / 2)
+            if dy <= 8:
+                # Nearly horizontal – straight line.
+                candidate = [
+                    [
+                        {"x": source_point[0], "y": source_point[1]},
+                        {"x": sink_point[0], "y": sink_point[1]},
+                    ]
                 ]
-            )
+            else:
+                # L-shape via midpoint x.
+                candidate = [
+                    [
+                        {"x": source_point[0], "y": source_point[1]},
+                        {"x": mid_x, "y": source_point[1]},
+                        {"x": mid_x, "y": sink_point[1]},
+                        {"x": sink_point[0], "y": sink_point[1]},
+                    ]
+                ]
+            if not _polylines_hit_unconnected(candidate, block_boxes_by_id, connected_block_ids):
+                route["polylines"] = candidate
+                route["labels"].append({"x": source_point[0] + 14, "y": source_point[1] - 10, "text": route["label"]})
+                direct_routed = True
+
+        if not direct_routed:
+            # --- Standard lane-based routing ----------------------------------
+            if is_control:
+                lane_y = top_lane + top_index * top_gap
+                top_index += 1
+            elif back_edge:
+                lane_y = bottom_lane - bottom_index * bottom_gap
+                bottom_index += 1
+            elif is_bus:
+                lane_y = bus_lane + bus_index * center_gap
+                bus_index += 1
+            else:
+                preferred_y = sum(point[1] for _, point in sink_points) / max(1, len(sink_points))
+                lane_y = max(center_lane + center_index * center_gap, _snap(preferred_y))
+                center_index += 1
+
+            trunk_start_x = _snap(source_point[0] + 36)
+            trunk_end_x = _snap(max(point[0] for _, point in sink_points) - 32) if sink_points else trunk_start_x + 40
+            trunk = [{"x": trunk_start_x, "y": _snap(lane_y)}, {"x": max(trunk_start_x + 20, trunk_end_x), "y": _snap(lane_y)}]
+
+            source_polyline = [
+                {"x": source_point[0], "y": source_point[1]},
+                {"x": trunk_start_x, "y": source_point[1]},
+                {"x": trunk_start_x, "y": _snap(lane_y)},
+            ]
+            route["polylines"].append(source_polyline)
+            route["polylines"].append(trunk)
+            route["labels"].append({"x": trunk_start_x + 10, "y": _snap(lane_y) - 10, "text": route["label"]})
+
+            for sink_id, sink_point in sink_points:
+                junction_x = _snap(sink_point[0] - 28)
+                junction = {"x": junction_x, "y": _snap(lane_y)}
+                route["junctions"].append(junction)
+                route["polylines"].append(
+                    [
+                        {"x": junction_x, "y": _snap(lane_y)},
+                        {"x": junction_x, "y": sink_point[1]},
+                        {"x": sink_point[0], "y": sink_point[1]},
+                    ]
+                )
+
+            # If lane-routed path crosses unconnected modules, fall back to
+            # connection-by-name so the wire doesn't visually pass behind them.
+            if _polylines_hit_unconnected(route["polylines"], block_boxes_by_id, connected_block_ids):
+                _emit_collapsed()
 
         routes.append(route)
         all_polylines.extend(route["polylines"])
