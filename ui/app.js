@@ -2302,11 +2302,35 @@ function placePortViewRoutes(graph) {
   const maxY = Math.max(...allYs);
   const midY = (minY + maxY) / 2;
 
+  // Assign lane Y values, only bumping when two routes' horizontal trunks
+  // would actually overlap in X.  This keeps each wire close to its natural
+  // midpoint Y instead of pushing everything monotonically down.
+  const findNonConflictingY = (candidateY, xMin, xMax, assignedLanes, direction, maxIter) => {
+    for (let i = 0; i < maxIter; i++) {
+      let conflicting = false;
+      for (const lane of assignedLanes) {
+        if (Math.abs(candidateY - lane.y) < ROUTE_LANE_GAP && xMin < lane.xMax && xMax > lane.xMin) {
+          // Jump past this lane's Y in the given direction.
+          candidateY = snapToGrid(lane.y + direction * ROUTE_LANE_GAP);
+          conflicting = true;
+          break;
+        }
+      }
+      if (!conflicting) break;
+    }
+    return candidateY;
+  };
+
   const assignCenterLanes = (items) => {
-    let nextY = snapToGrid(minY - LAYOUT_GRID);
+    const assignedLanes = []; // { y, xMin, xMax }
     for (const item of [...items].sort((left, right) => left.preferredY - right.preferredY)) {
-      item.laneY = snapToGrid(Math.max(item.preferredY, nextY));
-      nextY = item.laneY + ROUTE_LANE_GAP;
+      const xMin = Math.min(item.sourcePos.x, item.targetPos.x);
+      const xMax = Math.max(item.sourcePos.x, item.targetPos.x);
+      const candidateY = findNonConflictingY(
+        snapToGrid(item.preferredY), xMin, xMax, assignedLanes, 1, items.length + 1,
+      );
+      item.laneY = candidateY;
+      assignedLanes.push({ y: candidateY, xMin, xMax });
     }
   };
 
@@ -2329,13 +2353,24 @@ function placePortViewRoutes(graph) {
 
   assignCenterLanes(forwardRoutes);
 
-  [...topRoutes].sort((left, right) => left.preferredY - right.preferredY).forEach((route, idx) => {
-    route.laneY = snapToGrid(minY - 100 - idx * ROUTE_LANE_GAP);
-  });
+  // Backward routes: offset from diagram edges.
+  const assignBackwardLanes = (items, baseY, direction) => {
+    const assignedLanes = [];
+    const sorted = [...items].sort((left, right) => left.preferredY - right.preferredY);
+    sorted.forEach((item, idx) => {
+      const xMin = Math.min(item.sourcePos.x, item.targetPos.x);
+      const xMax = Math.max(item.sourcePos.x, item.targetPos.x);
+      const startY = snapToGrid(baseY + direction * idx * ROUTE_LANE_GAP);
+      const candidateY = findNonConflictingY(
+        startY, xMin, xMax, assignedLanes, direction, items.length + 1,
+      );
+      item.laneY = candidateY;
+      assignedLanes.push({ y: candidateY, xMin, xMax });
+    });
+  };
 
-  [...bottomRoutes].sort((left, right) => left.preferredY - right.preferredY).forEach((route, idx) => {
-    route.laneY = snapToGrid(maxY + 100 + idx * ROUTE_LANE_GAP);
-  });
+  assignBackwardLanes(topRoutes, minY - 100, -1);
+  assignBackwardLanes(bottomRoutes, maxY + 100, 1);
 
   const assignCenteredOffsets = (items, fieldName) => {
     const ordered = [...items].sort((left, right) => {
