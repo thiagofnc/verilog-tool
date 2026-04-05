@@ -2461,6 +2461,8 @@ function placeNetlabelNodes() {
       ? (portNode.data("instance_node_id") || portId)
       : portId;
     const labelWidth = node.data("label_width") || 50;
+    const halfWidth = Math.max(0, portNode.outerWidth() / 2);
+    const portEdgeX = portPos.x + side * halfWidth;
 
     placements.push({
       node,
@@ -2468,10 +2470,11 @@ function placeNetlabelNodes() {
       role,
       side,
       portX: portPos.x,
+      portEdgeX,
       portY: portPos.y,
       idealY: portPos.y,
       labelWidth,
-      x: portPos.x + side * (labelWidth / 2 + NETLABEL_WIRE_GAP),
+      x: portEdgeX + side * (labelWidth / 2 + NETLABEL_WIRE_GAP),
       y: portPos.y,
       groupKey: `${ownerId}:${side}`,
     });
@@ -2514,12 +2517,10 @@ function placeNetlabelNodes() {
     }
 
     const alignedEdgeX = group[0]?.side > 0
-      ? Math.max(...group.map((placement) => placement.portX)) + NETLABEL_WIRE_GAP
-      : Math.min(...group.map((placement) => placement.portX)) - NETLABEL_WIRE_GAP;
+      ? Math.max(...group.map((placement) => placement.portEdgeX)) + NETLABEL_WIRE_GAP
+      : Math.min(...group.map((placement) => placement.portEdgeX)) - NETLABEL_WIRE_GAP;
 
     group.forEach((placement) => {
-      placement.node.removeClass("netlabel-side-left netlabel-side-right");
-      placement.node.addClass(placement.side > 0 ? "netlabel-side-right" : "netlabel-side-left");
       placement.x = placement.side > 0
         ? alignedEdgeX + placement.labelWidth / 2
         : alignedEdgeX - placement.labelWidth / 2;
@@ -3756,6 +3757,7 @@ renderInspector();
     setStatus("API unavailable", "error");
   }
 })();
+
 
 
 
