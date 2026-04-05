@@ -1,4 +1,4 @@
-﻿import unittest
+import unittest
 
 from app.graph_builder import build_hierarchy_graph, build_module_connectivity_graph
 from app.models import AlwaysAssignment, AlwaysBlock, Instance, ModuleDef, PinConnection, Port, Project, Signal, SourceFile
@@ -214,10 +214,13 @@ class TestGraphBuilder(unittest.TestCase):
         self.assertTrue(any(node['id'] == 'process_port:always_comb_0:output:y' for node in process_ports))
         self.assertTrue(any(node['id'] == 'process_port:always_comb_0:inout:q' for node in process_ports))
         self.assertTrue(any(node['id'] == 'process_port:always_ff_1:input:a' for node in process_ports))
+        self.assertTrue(any(node['id'] == 'process_port:always_ff_1:input:clk' for node in process_ports))
         self.assertTrue(any(node['id'] == 'process_port:always_ff_1:output:q' for node in process_ports))
-
+        ff_node = next(node for node in process_nodes if node['block_name'] == 'always_ff_1')
+        self.assertIn('clk', ff_node['input_signals'])
         self.assertTrue(any(edge['target'] == 'process_port:always_comb_0:input:a' and edge['net'] == 'a' for edge in graph['edges']))
         self.assertTrue(any(edge['source'] == 'process_port:always_comb_0:output:y' and edge['net'] == 'y' for edge in graph['edges']))
+        self.assertTrue(any(edge['target'] == 'process_port:always_ff_1:input:clk' and edge['net'] == 'clk' for edge in graph['edges']))
         self.assertTrue(any(edge['source'] == 'process_port:always_ff_1:output:q' and edge['net'] == 'q' for edge in graph['edges']))
 
 

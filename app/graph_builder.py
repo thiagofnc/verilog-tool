@@ -1,4 +1,4 @@
-﻿"""Graph builders for hierarchy and module-internal connectivity views."""
+"""Graph builders for hierarchy and module-internal connectivity views."""
 
 from collections import defaultdict
 import re
@@ -312,6 +312,17 @@ def _always_signal_roles(block: AlwaysBlock) -> tuple[list[str], list[str], list
         if signal_name not in read_signals:
             read_signals.append(signal_name)
 
+    sensitivity = str(getattr(block, "sensitivity", "") or "")
+    sensitivity_signals = [
+        token
+        for token in re.findall(r"\b([A-Za-z_][A-Za-z0-9_$]*)\b", sensitivity)
+        if token not in {"posedge", "negedge", "or", "and"}
+    ]
+    clock_signal = getattr(block, "clock_signal", "") or ""
+    for signal_name in [clock_signal, *sensitivity_signals]:
+        if signal_name and signal_name not in read_signals:
+            read_signals.append(signal_name)
+
     for signal_name in getattr(block, "written_signals", None) or []:
         if signal_name not in written_signals:
             written_signals.append(signal_name)
@@ -592,7 +603,7 @@ def build_module_connectivity_graph(
                 }
             )
 
-    # Continuous assign nodes — show full expression.
+    # Continuous assign nodes â€” show full expression.
     for idx, assign in enumerate(getattr(module_def, "assigns", None) or []):
         assign_id = f"assign:{idx}:{assign.target}"
         target_base = _parse_signal_reference(assign.target).get("base_name") or assign.target
