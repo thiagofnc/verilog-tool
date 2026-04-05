@@ -442,30 +442,33 @@ function ensureCytoscape() {
     container: cyGraph,
     elements: [],
     style: [
+      // ── Base node ───────────────────────────────────────────
       {
         selector: "node",
         style: {
-          "background-color": "#5f7382",
-          width: 18,
-          height: 18,
+          "background-color": "#3f3f46",
+          width: 16,
+          height: 16,
           label: "",
           "border-width": 1,
-          "border-color": "#0a0f12",
+          "border-color": "#111113",
+          "font-family": "'IBM Plex Mono', Consolas, Monaco, monospace",
         },
       },
+      // ── Instance blocks ─────────────────────────────────────
       {
         selector: 'node[kind = "instance"]',
         style: {
-          "background-color": "#0e1f2e",
+          "background-color": "#141419",
           shape: "rectangle",
           width: "mapData(port_count, 0, 40, 130, 230)",
           height: 56,
-          "border-width": 2,
-          "border-color": "#4a90c0",
+          "border-width": 1.5,
+          "border-color": "#3b82f6",
           label: "data(label)",
           "font-size": 10,
-          "font-weight": "bold",
-          color: "#cce0f0",
+          "font-weight": "600",
+          color: "#e4e4e7",
           "text-valign": "center",
           "text-halign": "center",
           "text-wrap": "wrap",
@@ -478,13 +481,13 @@ function ensureCytoscape() {
           shape: "rectangle",
           width: "data(layout_width)",
           height: "data(layout_height)",
-          "background-color": "#0b1721",
-          "border-width": 2,
-          "border-color": "#356d90",
+          "background-color": "#111116",
+          "border-width": 1.5,
+          "border-color": "#3b82f6",
           label: "data(label)",
           "font-size": 11,
-          "font-weight": "bold",
-          color: "#d3e3ec",
+          "font-weight": "600",
+          color: "#e4e4e7",
           "text-valign": "top",
           "text-halign": "center",
           "text-margin-y": 13,
@@ -493,19 +496,20 @@ function ensureCytoscape() {
           "overlay-padding": 6,
         },
       },
+      // ── Ports (instance & process) ──────────────────────────
       {
         selector: 'node[kind = "instance_port"], node[kind = "process_port"]',
         style: {
           shape: "rectangle",
-          width: 7,
-          height: 7,
-          "background-color": "#6d93aa",
-          "border-width": 1.2,
-          "border-color": "#263d50",
+          width: 6,
+          height: 6,
+          "background-color": "#52525b",
+          "border-width": 1,
+          "border-color": "#27272a",
           label: "data(display_label)",
           "font-size": 8,
-          "font-family": "monospace",
-          color: "#7fa6ba",
+          "font-family": "'IBM Plex Mono', Consolas, monospace",
+          color: "#71717a",
           "text-valign": "center",
           "text-wrap": "ellipsis",
           "text-max-width": 72,
@@ -515,67 +519,68 @@ function ensureCytoscape() {
       {
         selector: 'node[kind = "instance_port"][direction = "output"], node[kind = "process_port"][direction = "output"]',
         style: {
-          "background-color": "#c77724",
-          "border-color": "#5a3208",
+          "background-color": "#d97706",
+          "border-color": "#451a03",
           "text-halign": "left",
           "text-margin-x": -17,
-          color: "#d8b17e",
+          color: "#fbbf24",
         },
       },
       {
         selector: 'node[kind = "instance_port"][direction = "input"], node[kind = "process_port"][direction = "input"]',
         style: {
-          "background-color": "#3778a8",
-          "border-color": "#102840",
+          "background-color": "#2563eb",
+          "border-color": "#1e1b4b",
           "text-halign": "right",
           "text-margin-x": 17,
-          color: "#88b8d6",
+          color: "#60a5fa",
         },
       },
       {
         selector: 'node[kind = "instance_port"][direction = "unknown"], node[kind = "process_port"][direction = "unknown"]',
         style: {
-          "background-color": "#5a7a8f",
-          "border-color": "#2a3c48",
+          "background-color": "#52525b",
+          "border-color": "#27272a",
           "text-halign": "right",
           "text-margin-x": 17,
-          color: "#a0b8c8",
+          color: "#a1a1aa",
         },
       },
+      // ── Module I/O ──────────────────────────────────────────
       {
         selector: 'node[kind = "module_io"]',
         style: {
-          "background-color": "#0e2c40",
+          "background-color": "#0c1425",
           shape: "tag",
           width: "mapData(bit_width, 1, 64, 100, 156)",
           height: 28,
           label: "data(port_name)",
-          color: "#90c8e8",
+          color: "#60a5fa",
           "font-size": 10,
-          "font-weight": "bold",
-          "font-family": "monospace",
+          "font-weight": "600",
+          "font-family": "'IBM Plex Mono', Consolas, monospace",
           "text-valign": "center",
           "text-halign": "center",
           "text-wrap": "ellipsis",
           "text-max-width": 92,
-          "border-width": 2,
-          "border-color": "#2e7aaa",
+          "border-width": 1.5,
+          "border-color": "#2563eb",
         },
       },
       {
         selector: 'node[kind = "module_io"][direction = "input"]',
         style: {
-          "background-color": "#0e2c40",
-          "border-color": "#2e8aaa",
-          color: "#70d0f8",
+          "background-color": "#0c1425",
+          "border-color": "#2563eb",
+          color: "#60a5fa",
         },
       },
       {
         selector: 'node[kind = "module_io"][direction = "output"]',
         style: {
-          "background-color": "#0e2c1a",
-          "border-color": "#2a7a40",
-          color: "#70e0a0",
+          "background-color": "#0a1a10",
+          "border-color": "#16a34a",
+          color: "#4ade80",
         },
       },
       {
@@ -584,82 +589,86 @@ function ensureCytoscape() {
           shape: "roundrectangle",
           width: "data(label_width)",
           height: 18,
-          "background-color": "#12210f",
+          "background-color": "#0a1a10",
           "border-width": 1,
-          "border-color": "#45652d",
+          "border-color": "#166534",
           label: "data(label)",
           "font-size": 9,
-          "font-family": "monospace",
-          "font-weight": "bold",
-          color: "#8ccf72",
+          "font-family": "'IBM Plex Mono', Consolas, monospace",
+          "font-weight": "600",
+          color: "#4ade80",
           "text-valign": "center",
           "text-halign": "center",
           events: "no",
         },
       },
+      // ── Net nodes ───────────────────────────────────────────
       {
         selector: 'node[kind = "net"]',
         style: {
-          "background-color": "#d58cff",
+          "background-color": "#a855f7",
           shape: "ellipse",
-          width: 14,
-          height: 14,
+          width: 12,
+          height: 12,
         },
       },
+      // ── Gate nodes ──────────────────────────────────────────
       {
         selector: 'node[kind = "gate"]',
         style: {
-          "background-color": "#1a3a2a",
+          "background-color": "#0a1a12",
           shape: "diamond",
           width: 80,
           height: 44,
-          "border-width": 2,
-          "border-color": "#48b880",
+          "border-width": 1.5,
+          "border-color": "#22c55e",
           label: "data(label)",
           "font-size": 9,
-          "font-weight": "bold",
-          "font-family": "monospace",
-          color: "#80e8b0",
+          "font-weight": "600",
+          "font-family": "'IBM Plex Mono', Consolas, monospace",
+          color: "#4ade80",
           "text-valign": "center",
           "text-halign": "center",
           "text-wrap": "wrap",
           "text-max-width": 70,
         },
       },
+      // ── Assign nodes ────────────────────────────────────────
       {
         selector: 'node[kind = "assign"]',
         style: {
-          "background-color": "#1e1230",
+          "background-color": "#140e24",
           shape: "roundrectangle",
           width: 180,
           height: 32,
-          "border-width": 2,
-          "border-color": "#9060c0",
+          "border-width": 1.5,
+          "border-color": "#8b5cf6",
           label: "data(label)",
           "font-size": 9,
-          "font-weight": "bold",
-          "font-family": "monospace",
-          color: "#c8a0e8",
+          "font-weight": "600",
+          "font-family": "'IBM Plex Mono', Consolas, monospace",
+          color: "#a78bfa",
           "text-valign": "center",
           "text-halign": "center",
           "text-wrap": "ellipsis",
           "text-max-width": 170,
         },
       },
+      // ── Always blocks ───────────────────────────────────────
       {
         selector: 'node[kind = "always"]',
         style: {
-          "background-color": "#131a17",
-          "background-opacity": 0.94,
+          "background-color": "#111116",
+          "background-opacity": 0.95,
           shape: "roundrectangle",
           width: "data(layout_width)",
           height: "data(layout_height)",
-          "border-width": 2.4,
-          "border-color": "#678377",
+          "border-width": 1.5,
+          "border-color": "#52525b",
           label: "data(label)",
           "font-size": 11,
-          "font-weight": "bold",
-          color: "#d9e7df",
+          "font-weight": "600",
+          color: "#e4e4e7",
           "text-valign": "top",
           "text-halign": "center",
           "text-margin-y": 12,
@@ -678,47 +687,48 @@ function ensureCytoscape() {
           "background-height": 44,
           "background-position-x": "50%",
           "background-position-y": "55%",
-          "background-image-opacity": 0.7,
+          "background-image-opacity": 0.6,
         },
       },
       {
         selector: 'node[kind = "always"][process_style = "comb"]',
         style: {
-          "background-color": "#13201a",
-          "border-color": "#6b8e7d",
+          "background-color": "#0a1610",
+          "border-color": "#22c55e",
           "border-style": "solid",
-          color: "#d7e5dd",
+          color: "#e4e4e7",
         },
       },
       {
         selector: 'node[kind = "always"][process_style = "seq"]',
         style: {
-          "background-color": "#171821",
-          "border-color": "#7d879d",
+          "background-color": "#10101c",
+          "border-color": "#6366f1",
           "border-style": "double",
-          color: "#e0e3ec",
+          color: "#e4e4e7",
         },
       },
       {
         selector: 'node[kind = "always"][process_style = "latch"]',
         style: {
-          "background-color": "#1b1913",
-          "border-color": "#9a8663",
+          "background-color": "#161410",
+          "border-color": "#ca8a04",
           "border-style": "dashed",
-          color: "#e8dfd0",
+          color: "#e4e4e7",
         },
       },
       {
         selector: 'node[kind = "process_port"][direction = "inout"]',
         style: {
           shape: "diamond",
-          "background-color": "#88b58f",
-          "border-color": "#2d5138",
-          color: "#a8d1af",
+          "background-color": "#4ade80",
+          "border-color": "#14532d",
+          color: "#86efac",
           "text-halign": "right",
           "text-margin-x": 17,
         },
       },
+      // ── Route anchors ───────────────────────────────────────
       {
         selector: 'node[kind = "route_anchor"]',
         style: {
@@ -732,28 +742,29 @@ function ensureCytoscape() {
       {
         selector: 'node[kind = "route_anchor"][route_role = "lane_entry"], node[kind = "route_anchor"][route_role = "lane_exit"]',
         style: {
-          width: 6,
-          height: 6,
-          opacity: 0.95,
-          "background-color": "#f4fbff",
-          "border-width": 1.4,
-          "border-color": "#0d1820",
+          width: 5,
+          height: 5,
+          opacity: 0.9,
+          "background-color": "#e4e4e7",
+          "border-width": 1,
+          "border-color": "#111113",
         },
       },
+      // ── Port stub anchors ───────────────────────────────────
       {
         selector: 'node[kind = "port_stub_anchor"]',
         style: {
           shape: "rectangle",
           width: 4,
           height: 4,
-          opacity: 0.9,
-          "background-color": "#3a5c72",
+          opacity: 0.85,
+          "background-color": "#3f3f46",
           "border-width": 0,
           events: "no",
           label: "data(port_name)",
           "font-size": 8.5,
-          "font-family": "monospace",
-          color: "#7aacc0",
+          "font-family": "'IBM Plex Mono', Consolas, monospace",
+          color: "#71717a",
           "text-valign": "center",
           "text-wrap": "none",
         },
@@ -761,43 +772,46 @@ function ensureCytoscape() {
       {
         selector: 'node[kind = "port_stub_anchor"][direction = "output"]',
         style: {
-          "background-color": "#5c3a10",
+          "background-color": "#92400e",
           "text-halign": "right",
           "text-margin-x": 6,
-          color: "#d4a060",
+          color: "#fbbf24",
         },
       },
       {
         selector: 'node[kind = "port_stub_anchor"][direction = "input"]',
         style: {
-          "background-color": "#103050",
+          "background-color": "#1e3a5f",
           "text-halign": "left",
           "text-margin-x": -6,
-          color: "#70b0d8",
+          color: "#60a5fa",
         },
       },
+      // ── Bus emphasis ────────────────────────────────────────
       {
         selector: "node[is_bus = 1]",
         style: {
-          "border-width": 2.5,
-          "border-color": "#7ec6ff",
+          "border-width": 2,
+          "border-color": "#60a5fa",
         },
       },
+      // ── Selection ───────────────────────────────────────────
       {
         selector: "node:selected",
         style: {
-          "border-width": 3,
-          "border-color": "#ffffff",
+          "border-width": 2.5,
+          "border-color": "#22d3ee",
         },
       },
+      // ── Edges ───────────────────────────────────────────────
       {
         selector: "edge",
         style: {
-          width: 1.8,
-          "line-color": "#42d392",
-          "target-arrow-color": "#42d392",
+          width: 1.5,
+          "line-color": "#22c55e",
+          "target-arrow-color": "#22c55e",
           "target-arrow-shape": "triangle",
-          "arrow-scale": 0.7,
+          "arrow-scale": 0.65,
           "curve-style": "bezier",
           "control-point-step-size": 40,
         },
@@ -807,8 +821,8 @@ function ensureCytoscape() {
         style: {
           "curve-style": "bezier",
           "control-point-step-size": 40,
-          "arrow-scale": 0.56,
-          "line-opacity": 0.74,
+          "arrow-scale": 0.5,
+          "line-opacity": 0.7,
           "line-cap": "butt",
           "source-endpoint": "outside-to-line",
           "target-endpoint": "outside-to-line",
@@ -822,19 +836,20 @@ function ensureCytoscape() {
           "source-arrow-shape": "none",
         },
       },
+      // ── Net labels ──────────────────────────────────────────
       {
         selector: 'node[kind = "netlabel_node"]',
         style: {
           shape: "roundrectangle",
           width: "data(label_width)",
-          height: 17,
-          "background-color": "#12210f",
+          height: 16,
+          "background-color": "#0a1a10",
           "border-width": 1,
-          "border-color": "#45652d",
+          "border-color": "#166534",
           label: "data(net_label_text)",
           "font-size": 8,
-          "font-family": "monospace",
-          color: "#8ccf72",
+          "font-family": "'IBM Plex Mono', Consolas, monospace",
+          color: "#4ade80",
           "text-valign": "center",
           "text-halign": "center",
           "overlay-padding": 3,
@@ -844,11 +859,11 @@ function ensureCytoscape() {
         selector: 'edge[netlabel_stub = 1]',
         style: {
           "curve-style": "straight",
-          width: 1.5,
-          "line-color": "#3a6820",
+          width: 1.2,
+          "line-color": "#166534",
           "target-arrow-shape": "none",
           "source-arrow-shape": "none",
-          "line-opacity": 0.85,
+          "line-opacity": 0.8,
         },
       },
       {
@@ -856,12 +871,12 @@ function ensureCytoscape() {
         style: {
           "curve-style": "straight",
           "target-arrow-shape": "tee",
-          "target-arrow-color": "#3a5c72",
-          "arrow-scale": 0.7,
+          "target-arrow-color": "#3f3f46",
+          "arrow-scale": 0.65,
           "source-arrow-shape": "none",
           "line-cap": "butt",
-          "line-opacity": 0.82,
-          width: 1.5,
+          "line-opacity": 0.75,
+          width: 1.2,
         },
       },
       {
@@ -870,79 +885,81 @@ function ensureCytoscape() {
           "target-arrow-shape": "triangle",
         },
       },
+      // ── Signal class edges ──────────────────────────────────
       {
         selector: 'edge[sig_class = "wire"]',
         style: {
-          width: 1.8,
-          "line-color": "#42d392",
-          "target-arrow-color": "#42d392",
+          width: 1.5,
+          "line-color": "#22c55e",
+          "target-arrow-color": "#22c55e",
         },
       },
       {
         selector: 'edge[sig_class = "bus"]',
         style: {
-          width: 3.1,
-          "line-color": "#4fb6ff",
-          "target-arrow-color": "#4fb6ff",
-          "arrow-scale": 0.85,
+          width: 2.8,
+          "line-color": "#3b82f6",
+          "target-arrow-color": "#3b82f6",
+          "arrow-scale": 0.8,
         },
       },
       {
         selector: 'edge[sig_class = "mixed"]',
         style: {
-          width: 2.7,
-          "line-color": "#82c8ff",
-          "target-arrow-color": "#82c8ff",
-          "arrow-scale": 0.8,
+          width: 2.4,
+          "line-color": "#60a5fa",
+          "target-arrow-color": "#60a5fa",
+          "arrow-scale": 0.75,
         },
       },
       {
         selector: 'edge[flow = "unknown"]',
         style: {
           "line-style": "dashed",
-          "line-color": "#98a6b3",
-          "target-arrow-color": "#98a6b3",
+          "line-color": "#52525b",
+          "target-arrow-color": "#52525b",
           "target-arrow-shape": "none",
         },
       },
+      // ── Selection & highlight states ────────────────────────
       {
         selector: "edge:selected",
         style: {
-          width: 3.1,
-          "line-color": "#ffc857",
-          "target-arrow-color": "#ffc857",
+          width: 2.8,
+          "line-color": "#22d3ee",
+          "target-arrow-color": "#22d3ee",
         },
       },
       {
         selector: 'node.netlabel-highlighted[kind = "netlabel_node"]',
         style: {
-          "background-color": "#3a2800",
-          "border-color": "#ffc857",
+          "background-color": "#1a1500",
+          "border-color": "#f59e0b",
           "border-width": 2,
-          color: "#ffee66",
+          color: "#fde68a",
         },
       },
       {
         selector: 'edge.netlabel-highlighted[netlabel_stub = 1]',
         style: {
-          "line-color": "#ffc857",
-          width: 2,
+          "line-color": "#f59e0b",
+          width: 1.8,
         },
       },
       {
         selector: 'node.netlabel-endpoint',
         style: {
-          "border-color": "#ffc857",
-          "border-width": 3,
+          "border-color": "#f59e0b",
+          "border-width": 2.5,
         },
       },
-      // Signal trace highlighting on hover
+      // ── Trace highlight (hover) ─────────────────────────────
       {
         selector: "edge.trace-highlight",
         style: {
-          "line-color": "#ffc857",
-          "target-arrow-color": "#ffc857",
-          width: 3.1,
+          "line-color": "#22d3ee",
+          "target-arrow-color": "#22d3ee",
+          width: 2.8,
           "z-index": 100,
           "line-opacity": 1,
         },
@@ -950,9 +967,9 @@ function ensureCytoscape() {
       {
         selector: "edge.relation-highlight",
         style: {
-          "line-color": "#ffc857",
-          "target-arrow-color": "#ffc857",
-          width: 3.2,
+          "line-color": "#22d3ee",
+          "target-arrow-color": "#22d3ee",
+          width: 2.8,
           "line-opacity": 1,
           "z-index": 110,
         },
@@ -960,62 +977,62 @@ function ensureCytoscape() {
       {
         selector: "node.relation-highlight",
         style: {
-          "border-color": "#ffc857",
-          "border-width": 3,
+          "border-color": "#22d3ee",
+          "border-width": 2.5,
           "z-index": 110,
         },
       },
       {
         selector: "node.relation-source",
         style: {
-          "border-color": "#72d7a7",
+          "border-color": "#4ade80",
         },
       },
       {
         selector: "node.relation-sink",
         style: {
-          "border-color": "#8cc9ff",
+          "border-color": "#60a5fa",
         },
       },
       {
         selector: "node.trace-highlight",
         style: {
-          "border-color": "#ffc857",
-          "border-width": 2.5,
+          "border-color": "#22d3ee",
+          "border-width": 2,
           "z-index": 100,
         },
       },
-      // Signal trace styles — full-path trace triggered by double-click on a port
+      // ── Signal trace (double-click port) ────────────────────
       {
         selector: "node.signal-trace-upstream",
         style: {
-          "border-color": "#72d7a7",
-          "border-width": 3,
+          "border-color": "#4ade80",
+          "border-width": 2.5,
           "z-index": 120,
         },
       },
       {
         selector: "node.signal-trace-downstream",
         style: {
-          "border-color": "#8cc9ff",
-          "border-width": 3,
+          "border-color": "#60a5fa",
+          "border-width": 2.5,
           "z-index": 120,
         },
       },
       {
         selector: "node.signal-trace-origin",
         style: {
-          "border-color": "#ffc857",
-          "border-width": 4,
+          "border-color": "#22d3ee",
+          "border-width": 3,
           "z-index": 130,
         },
       },
       {
         selector: "edge.signal-trace-upstream",
         style: {
-          "line-color": "#72d7a7",
-          "target-arrow-color": "#72d7a7",
-          width: 3.5,
+          "line-color": "#4ade80",
+          "target-arrow-color": "#4ade80",
+          width: 3,
           "line-opacity": 1,
           "z-index": 120,
         },
@@ -1023,9 +1040,9 @@ function ensureCytoscape() {
       {
         selector: "edge.signal-trace-downstream",
         style: {
-          "line-color": "#8cc9ff",
-          "target-arrow-color": "#8cc9ff",
-          width: 3.5,
+          "line-color": "#60a5fa",
+          "target-arrow-color": "#60a5fa",
+          width: 3,
           "line-opacity": 1,
           "z-index": 120,
         },
@@ -1033,24 +1050,24 @@ function ensureCytoscape() {
       {
         selector: "node.signal-trace-dimmed",
         style: {
-          opacity: 0.25,
+          opacity: 0.2,
         },
       },
       {
         selector: "edge.signal-trace-dimmed",
         style: {
-          opacity: 0.12,
+          opacity: 0.08,
         },
       },
-      // Bus width label on trunk segments
+      // ── Bus width label on trunk segments ───────────────────
       {
         selector: 'edge[route_segment = 1][segment_role = "trunk"][bus_width_label]',
         style: {
           label: "data(bus_width_label)",
           "font-size": 8,
-          "font-family": "monospace",
-          color: "#90caf9",
-          "text-background-color": "#1a1f2e",
+          "font-family": "'IBM Plex Mono', Consolas, monospace",
+          color: "#60a5fa",
+          "text-background-color": "#111113",
           "text-background-opacity": 0.92,
           "text-background-padding": "2px",
           "text-rotation": "autorotate",
@@ -3233,11 +3250,11 @@ function renderSignalTracePanel(trace) {
     panel = document.createElement("div");
     panel.id = "signalTracePanel";
     panel.style.cssText = `
-      position: absolute; top: 10px; left: 10px; z-index: 200;
-      background: #1a1f2e; border: 1px solid #2b3f4d; border-radius: 6px;
-      padding: 12px 14px; min-width: 280px; max-width: 400px;
-      max-height: 60vh; overflow-y: auto; color: #c8d6e5;
-      font-family: monospace; font-size: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      position: absolute; top: 8px; left: 8px; z-index: 200;
+      background: #18181b; border: 1px solid rgba(255,255,255,0.10); border-radius: 4px;
+      padding: 10px 12px; min-width: 260px; max-width: 380px;
+      max-height: 60vh; overflow-y: auto; color: #e4e4e7;
+      font-family: 'IBM Plex Mono', Consolas, Monaco, monospace; font-size: 11px;
     `;
     const canvas = document.getElementById("graphCanvas");
     if (canvas) canvas.appendChild(panel);
@@ -3253,7 +3270,7 @@ function renderSignalTracePanel(trace) {
   };
 
   const renderSteps = (steps, color, label) => {
-    if (!steps.length) return `<div style="color:#666;margin:2px 0;">${label}: (none)</div>`;
+    if (!steps.length) return `<div style="color:#52525b;margin:2px 0;">${label}: (none)</div>`;
 
     // Group consecutive steps by parent instance.
     const groups = [];
@@ -3271,18 +3288,18 @@ function renderSignalTracePanel(trace) {
       }
     }
 
-    let html = `<div style="color:${color};font-weight:bold;margin:6px 0 3px;">${label}</div>`;
+    let html = `<div style="color:${color};font-weight:600;margin:6px 0 3px;font-size:10px;letter-spacing:0.06em;text-transform:uppercase;">${label}</div>`;
     for (const group of groups) {
       const icon = kindIcon(group.parentKind);
       const portList = group.ports.map((p) => {
-        const netTag = p.netName ? `<span style="color:#ffc857;"> [${escapeHtml(p.netName)}]</span>` : "";
+        const netTag = p.netName ? `<span style="color:#22d3ee;"> [${escapeHtml(p.netName)}]</span>` : "";
         const arrow = p.crossedInstance ? " \u2192 " : ""; // →
         const dirTag = p.direction === "input" ? "\u2192" : p.direction === "output" ? "\u2190" : "\u2194";
-        return `${arrow}<span style="color:#aaa;">${dirTag}</span> ${escapeHtml(p.portName)}${netTag}`;
+        return `${arrow}<span style="color:#71717a;">${dirTag}</span> ${escapeHtml(p.portName)}${netTag}`;
       }).join("<br>");
-      html += `<div style="margin:3px 0 3px 8px;padding:4px 6px;border-left:2px solid ${color};background:rgba(255,255,255,0.03);border-radius:0 3px 3px 0;">
-        <div style="font-weight:bold;">${icon} ${escapeHtml(group.parentLabel)}</div>
-        <div style="margin-left:12px;">${portList}</div>
+      html += `<div style="margin:2px 0 2px 6px;padding:3px 6px;border-left:1.5px solid ${color};background:rgba(255,255,255,0.02);border-radius:0 2px 2px 0;">
+        <div style="font-weight:600;">${icon} ${escapeHtml(group.parentLabel)}</div>
+        <div style="margin-left:10px;">${portList}</div>
       </div>`;
     }
     return html;
@@ -3292,17 +3309,17 @@ function renderSignalTracePanel(trace) {
   const originIcon = kindIcon(origin.parentKind);
 
   panel.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-      <span style="font-weight:bold;font-size:13px;">Signal Trace</span>
-      <button id="closeTracePanel" style="background:none;border:none;color:#888;cursor:pointer;font-size:16px;">&times;</button>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+      <span style="font-weight:600;font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:#a1a1aa;">Signal Trace</span>
+      <button id="closeTracePanel" style="background:none;border:none;color:#52525b;cursor:pointer;font-size:14px;line-height:1;">&times;</button>
     </div>
-    <div style="padding:4px 6px;border:1px solid #ffc857;border-radius:4px;margin-bottom:8px;background:rgba(255,200,87,0.08);">
-      <span style="color:#ffc857;">Origin:</span> ${originIcon} <strong>${escapeHtml(origin.parentLabel)}</strong>
-      . ${escapeHtml(origin.portName)}
+    <div style="padding:3px 6px;border:1px solid rgba(34,211,238,0.3);border-radius:3px;margin-bottom:6px;background:rgba(34,211,238,0.06);">
+      <span style="color:#22d3ee;font-size:10px;font-weight:500;">ORIGIN</span> ${originIcon} <strong>${escapeHtml(origin.parentLabel)}</strong>
+      .${escapeHtml(origin.portName)}
     </div>
-    ${renderSteps(trace.upstream, "#72d7a7", "\u25b2 Upstream (sources)")}
-    ${renderSteps(trace.downstream, "#8cc9ff", "\u25bc Downstream (sinks)")}
-    <div style="color:#555;margin-top:8px;font-size:10px;">Double-click a port to trace. Click background to clear.</div>
+    ${renderSteps(trace.upstream, "#4ade80", "\u25b2 Upstream (sources)")}
+    ${renderSteps(trace.downstream, "#60a5fa", "\u25bc Downstream (sinks)")}
+    <div style="color:#3f3f46;margin-top:6px;font-size:9px;">Double-click port to trace. Click background to clear.</div>
   `;
 
   document.getElementById("closeTracePanel").addEventListener("click", () => {
