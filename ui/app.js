@@ -38,6 +38,7 @@ const state = {
   schematicMode: "simplified",
   lastTapNodeId: null,
   lastTapTs: 0,
+  signalTrace: null,
 };
 
 const folderInput = document.getElementById("folderInput");
@@ -968,6 +969,63 @@ function ensureCytoscape() {
           "z-index": 100,
         },
       },
+      // Signal trace styles — full-path trace triggered by double-click on a port
+      {
+        selector: "node.signal-trace-upstream",
+        style: {
+          "border-color": "#72d7a7",
+          "border-width": 3,
+          "z-index": 120,
+        },
+      },
+      {
+        selector: "node.signal-trace-downstream",
+        style: {
+          "border-color": "#8cc9ff",
+          "border-width": 3,
+          "z-index": 120,
+        },
+      },
+      {
+        selector: "node.signal-trace-origin",
+        style: {
+          "border-color": "#ffc857",
+          "border-width": 4,
+          "z-index": 130,
+        },
+      },
+      {
+        selector: "edge.signal-trace-upstream",
+        style: {
+          "line-color": "#72d7a7",
+          "target-arrow-color": "#72d7a7",
+          width: 3.5,
+          "line-opacity": 1,
+          "z-index": 120,
+        },
+      },
+      {
+        selector: "edge.signal-trace-downstream",
+        style: {
+          "line-color": "#8cc9ff",
+          "target-arrow-color": "#8cc9ff",
+          width: 3.5,
+          "line-opacity": 1,
+          "z-index": 120,
+        },
+      },
+      {
+        selector: "node.signal-trace-dimmed",
+        style: {
+          opacity: 0.25,
+        },
+      },
+      {
+        selector: "edge.signal-trace-dimmed",
+        style: {
+          opacity: 0.12,
+        },
+      },
       // Bus width label on trunk segments
       {
         selector: 'edge[route_segment = 1][segment_role = "trunk"][bus_width_label]',
@@ -988,6 +1046,281 @@ function ensureCytoscape() {
 
   function clearRelationHighlights() {
     state.cy.elements(".relation-highlight, .relation-source, .relation-sink").removeClass("relation-highlight relation-source relation-sink");
+  }
+
+  // ── Signal Trace ──────────────────────────────────────────────────────
+  // Traces a signal forward (downstream) and backward (upstream) through
+  // the entire module, crossing instance boundaries via shared net names.
+  // Returns { upstream: [...steps], downstream: [...steps] } where each
+  // step is { portId, netName, parentInstance, portName, direction }.
+
+  function clearSignalTrace() {
+    state.cy.elements(
+      ".signal-trace-upstream, .signal-trace-downstream, .signal-trace-origin, .signal-trace-dimmed"
+    ).removeClass(
+      "signal-trace-upstream signal-trace-downstream signal-trace-origin signal-trace-dimmed"
+    );
+    state.signalTrace = null;
+  }
+
+  function buildTraceGraph() {
+    // Build adjacency structures from the original graph edges so we can
+    // trace through netlabel connections (which have no Cytoscape edges).
+    const graph = state.graph;
+    if (!graph) return null;
+
+    // portToParent: port node id → parent instance id
+    const portToParent = new Map();
+    // parentLabel: instance id → display label
+    const parentLabel = new Map();
+    // portName: port id → port_name
+    const portName = new Map();
+    // portDirection: port id → "input" | "output"
+    const portDirection = new Map();
+
+    for (const node of graph.nodes || []) {
+      if (node.kind === "instance_port" || node.kind === "process_port") {
+        const pid = node.parent_node_id || node.instance_node_id || node.process_node_id;
+        if (pid) portToParent.set(node.id, pid);
+        portName.set(node.id, node.port_name || node.label || "");
+        portDirection.set(node.id, (node.direction || "").toLowerCase());
+      }
+      if (node.kind === "instance" || node.kind === "always" || node.kind === "gate" || node.kind === "assign") {
+        parentLabel.set(node.id, node.instance_name || node.label || node.id);
+      }
+      if (node.kind === "module_io") {
+        portName.set(node.id, node.port_name || node.label || "");
+        portDirection.set(node.id, (node.direction || "").toLowerCase());
+        parentLabel.set(node.id, node.port_name || node.label || "");
+      }
+    }
+
+    // forward: source port → [{ target, net }]
+    // backward: target port → [{ source, net }]
+    const forward = new Map();
+    const backward = new Map();
+
+    for (const edge of graph.edges || []) {
+      const netName = edge.net || edge.signal_name || "";
+      if (!forward.has(edge.source)) forward.set(edge.source, []);
+      forward.get(edge.source).push({ port: edge.target, net: netName });
+      if (!backward.has(edge.target)) backward.set(edge.target, []);
+      backward.get(edge.target).push({ port: edge.source, net: netName });
+    }
+
+    // Given a port, find sibling ports on the same instance (to cross the
+    // instance boundary).  E.g. if we arrive at an instance's input port,
+    // the signal flows through the instance to its output ports.
+    const siblingsByParent = new Map();
+    for (const node of graph.nodes || []) {
+      if (node.kind !== "instance_port" && node.kind !== "process_port") continue;
+      const pid = node.parent_node_id || node.instance_node_id || node.process_node_id;
+      if (!pid) continue;
+      if (!siblingsByParent.has(pid)) siblingsByParent.set(pid, []);
+      siblingsByParent.get(pid).push(node.id);
+    }
+
+    return { forward, backward, portToParent, parentLabel, portName, portDirection, siblingsByParent };
+  }
+
+  function traceSignal(startPortId) {
+    const tg = buildTraceGraph();
+    if (!tg) return null;
+
+    const { forward, backward, portToParent, parentLabel, portName, portDirection, siblingsByParent } = tg;
+
+    function makeStep(portId, netName) {
+      const pid = portToParent.get(portId);
+      return {
+        portId,
+        netName: netName || "",
+        parentInstance: pid || portId,
+        parentLabel: parentLabel.get(pid) || parentLabel.get(portId) || portId,
+        portName: portName.get(portId) || portId,
+        direction: portDirection.get(portId) || "unknown",
+        kind: state.graph.nodes.find((n) => n.id === portId)?.kind || "unknown",
+        parentKind: pid ? (state.graph.nodes.find((n) => n.id === pid)?.kind || "unknown") : "module_io",
+      };
+    }
+
+    // BFS in one direction.  When we arrive at a port, we also cross
+    // through its parent instance to sibling ports on the opposite side.
+    function bfs(adjacency, crossDirection) {
+      const visited = new Set();
+      const steps = [];
+      const queue = []; // { portId, netName, depth }
+
+      // Seed: direct neighbours of the start port
+      const initial = adjacency.get(startPortId) || [];
+      for (const { port, net } of initial) {
+        if (!visited.has(port)) {
+          visited.add(port);
+          queue.push({ portId: port, netName: net, depth: 0 });
+        }
+      }
+
+      while (queue.length) {
+        const { portId, netName, depth } = queue.shift();
+        const step = makeStep(portId, netName);
+        step.depth = depth;
+        steps.push(step);
+
+        // Cross through the instance: find sibling ports on the opposite side.
+        const pid = portToParent.get(portId);
+        if (pid) {
+          const siblings = siblingsByParent.get(pid) || [];
+          for (const sibId of siblings) {
+            if (sibId === portId || visited.has(sibId)) continue;
+            const sibDir = portDirection.get(sibId) || "";
+            // When tracing forward (downstream): enter input → exit output
+            // When tracing backward (upstream): enter output → exit input
+            if (sibDir === crossDirection) {
+              visited.add(sibId);
+              const crossStep = makeStep(sibId, netName);
+              crossStep.depth = depth;
+              crossStep.crossedInstance = true;
+              steps.push(crossStep);
+
+              // Continue from this sibling's connections
+              const next = adjacency.get(sibId) || [];
+              for (const { port: np, net: nn } of next) {
+                if (!visited.has(np)) {
+                  visited.add(np);
+                  queue.push({ portId: np, netName: nn, depth: depth + 1 });
+                }
+              }
+            }
+          }
+        }
+
+        // Also follow the adjacency from this port directly (for module_io etc.)
+        const directNext = adjacency.get(portId) || [];
+        for (const { port: np, net: nn } of directNext) {
+          if (!visited.has(np)) {
+            visited.add(np);
+            queue.push({ portId: np, netName: nn, depth: depth + 1 });
+          }
+        }
+      }
+
+      return steps;
+    }
+
+    const downstream = bfs(forward, "output");
+    const upstream = bfs(backward, "input");
+
+    return {
+      origin: makeStep(startPortId, ""),
+      upstream,
+      downstream,
+    };
+  }
+
+  function applySignalTrace(startPortId) {
+    clearSignalTrace();
+    clearRelationHighlights();
+    state.cy.elements(".netlabel-highlighted, .netlabel-endpoint").removeClass("netlabel-highlighted netlabel-endpoint");
+
+    const trace = traceSignal(startPortId);
+    if (!trace) return;
+
+    state.signalTrace = trace;
+
+    // Collect all port IDs involved in the trace.
+    const tracePortIds = new Set();
+    tracePortIds.add(startPortId);
+    const upIds = new Set();
+    const downIds = new Set();
+
+    for (const step of trace.upstream) {
+      tracePortIds.add(step.portId);
+      upIds.add(step.portId);
+      upIds.add(step.parentInstance);
+    }
+    for (const step of trace.downstream) {
+      tracePortIds.add(step.portId);
+      downIds.add(step.portId);
+      downIds.add(step.parentInstance);
+    }
+
+    // Dim everything first, then highlight the trace path.
+    state.cy.elements().addClass("signal-trace-dimmed");
+
+    // Un-dim and highlight trace elements.
+    const originNode = state.cy.getElementById(startPortId);
+    if (originNode && !originNode.empty()) {
+      originNode.removeClass("signal-trace-dimmed").addClass("signal-trace-origin");
+      // Also un-dim parent instance
+      const pid = originNode.data("parent_node_id") || originNode.data("instance_node_id") || originNode.data("process_node_id");
+      if (pid) state.cy.getElementById(pid).removeClass("signal-trace-dimmed").addClass("signal-trace-origin");
+    }
+
+    const highlightPort = (portId, direction) => {
+      const cls = direction === "upstream" ? "signal-trace-upstream" : "signal-trace-downstream";
+      const node = state.cy.getElementById(portId);
+      if (node && !node.empty()) {
+        node.removeClass("signal-trace-dimmed").addClass(cls);
+        // Un-dim parent instance
+        const pid = node.data("parent_node_id") || node.data("instance_node_id") || node.data("process_node_id");
+        if (pid) {
+          state.cy.getElementById(pid).removeClass("signal-trace-dimmed").addClass(cls);
+        }
+      }
+    };
+
+    for (const step of trace.upstream) highlightPort(step.portId, "upstream");
+    for (const step of trace.downstream) highlightPort(step.portId, "downstream");
+
+    // Highlight edges and netlabel stubs along the trace path.
+    state.cy.edges().forEach((edge) => {
+      const src = edge.data("source");
+      const tgt = edge.data("target");
+
+      // Routed edges: highlight if both endpoints are in the trace
+      if (tracePortIds.has(src) && tracePortIds.has(tgt)) {
+        const dir = upIds.has(src) || upIds.has(tgt) ? "upstream" : "downstream";
+        edge.removeClass("signal-trace-dimmed").addClass(`signal-trace-${dir}`);
+        return;
+      }
+
+      // Netlabel stubs: highlight if the connected port is in the trace
+      if (edge.data("netlabel_stub")) {
+        const connectedPort = edge.data("connected_port") ||
+          (tracePortIds.has(src) ? src : tracePortIds.has(tgt) ? tgt : null);
+        if (connectedPort && tracePortIds.has(connectedPort)) {
+          const dir = upIds.has(connectedPort) ? "upstream" : "downstream";
+          edge.removeClass("signal-trace-dimmed").addClass(`signal-trace-${dir}`);
+          // Also highlight the netlabel node
+          const otherEnd = src === connectedPort ? tgt : src;
+          const nlNode = state.cy.getElementById(otherEnd);
+          if (nlNode && !nlNode.empty() && nlNode.data("kind") === "netlabel_node") {
+            nlNode.removeClass("signal-trace-dimmed").addClass(`signal-trace-${dir}`);
+          }
+          return;
+        }
+      }
+
+      // Route segment edges: highlight if source or target port is in trace
+      if (edge.data("route_segment")) {
+        const edgeSrc = edge.data("source");
+        const edgeTgt = edge.data("target");
+        // The original source/target are in the edge's data from the graph edge
+        // Check if any endpoint of this route segment is a traced port
+        if (tracePortIds.has(edgeSrc) || tracePortIds.has(edgeTgt)) {
+          const dir = upIds.has(edgeSrc) || upIds.has(edgeTgt) ? "upstream" : "downstream";
+          edge.removeClass("signal-trace-dimmed").addClass(`signal-trace-${dir}`);
+          // Also un-dim route anchor nodes
+          [edgeSrc, edgeTgt].forEach((id) => {
+            const n = state.cy.getElementById(id);
+            if (n && !n.empty() && n.data("kind") === "route_anchor") {
+              n.removeClass("signal-trace-dimmed").addClass(`signal-trace-${dir}`);
+            }
+          });
+        }
+      }
+    });
+
+    renderSignalTracePanel(trace);
   }
 
   function highlightNodeRelations(node) {
@@ -1062,7 +1395,28 @@ function ensureCytoscape() {
     if (isDoubleTap && data.kind === "always") {
       showAlwaysDetail(data);
     }
+
+    // Double-click on a port or module_io: trigger signal trace
+    if (isDoubleTap && ["instance_port", "process_port", "module_io"].includes(data.kind)) {
+      applySignalTrace(data.id);
+    }
   });
+
+  // Double-click on a netlabel: trace from its connected port
+  state.cy.on("tap", 'node[kind = "netlabel_node"]', (() => {
+    let lastNlId = null;
+    let lastNlTs = 0;
+    return (event) => {
+      const data = event.target.data();
+      const now = Date.now();
+      const isDouble = lastNlId === data.id && now - lastNlTs < 360;
+      lastNlId = data.id;
+      lastNlTs = now;
+      if (isDouble && data.connected_port) {
+        applySignalTrace(data.connected_port);
+      }
+    };
+  })());
 
   state.cy.on("tap", "edge", (event) => {
     state.selectedEdge = event.target.data();
@@ -1108,6 +1462,8 @@ function ensureCytoscape() {
       state.selectedEdge = null;
       state.cy.elements(".netlabel-highlighted, .netlabel-endpoint").removeClass("netlabel-highlighted netlabel-endpoint");
       clearRelationHighlights();
+      clearSignalTrace();
+      renderSignalTracePanel(null);
       renderInspector();
     }
   });
@@ -2826,6 +3182,103 @@ function renderCyGraph(graph) {
     stop: showGraph,
   }).run();
 }
+function renderSignalTracePanel(trace) {
+  if (!trace) {
+    const existing = document.getElementById("signalTracePanel");
+    if (existing) existing.remove();
+    return;
+  }
+
+  let panel = document.getElementById("signalTracePanel");
+  if (!panel) {
+    panel = document.createElement("div");
+    panel.id = "signalTracePanel";
+    panel.style.cssText = `
+      position: absolute; top: 10px; left: 10px; z-index: 200;
+      background: #1a1f2e; border: 1px solid #2b3f4d; border-radius: 6px;
+      padding: 12px 14px; min-width: 280px; max-width: 400px;
+      max-height: 60vh; overflow-y: auto; color: #c8d6e5;
+      font-family: monospace; font-size: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    `;
+    const canvas = document.getElementById("graphCanvas");
+    if (canvas) canvas.appendChild(panel);
+  }
+
+  const kindIcon = (kind) => {
+    if (kind === "module_io") return "\u25c6"; // ◆
+    if (kind === "instance") return "\u25a0"; // ■
+    if (kind === "always") return "\u25b6"; // ▶
+    if (kind === "assign") return "\u2190"; // ←
+    if (kind === "gate") return "\u25b3"; // △
+    return "\u25cb"; // ○
+  };
+
+  const renderSteps = (steps, color, label) => {
+    if (!steps.length) return `<div style="color:#666;margin:2px 0;">${label}: (none)</div>`;
+
+    // Group consecutive steps by parent instance.
+    const groups = [];
+    for (const step of steps) {
+      const last = groups[groups.length - 1];
+      if (last && last.parentInstance === step.parentInstance) {
+        last.ports.push(step);
+      } else {
+        groups.push({
+          parentInstance: step.parentInstance,
+          parentLabel: step.parentLabel,
+          parentKind: step.parentKind,
+          ports: [step],
+        });
+      }
+    }
+
+    let html = `<div style="color:${color};font-weight:bold;margin:6px 0 3px;">${label}</div>`;
+    for (const group of groups) {
+      const icon = kindIcon(group.parentKind);
+      const portList = group.ports.map((p) => {
+        const netTag = p.netName ? `<span style="color:#ffc857;"> [${escapeHtml(p.netName)}]</span>` : "";
+        const arrow = p.crossedInstance ? " \u2192 " : ""; // →
+        const dirTag = p.direction === "input" ? "\u2192" : p.direction === "output" ? "\u2190" : "\u2194";
+        return `${arrow}<span style="color:#aaa;">${dirTag}</span> ${escapeHtml(p.portName)}${netTag}`;
+      }).join("<br>");
+      html += `<div style="margin:3px 0 3px 8px;padding:4px 6px;border-left:2px solid ${color};background:rgba(255,255,255,0.03);border-radius:0 3px 3px 0;">
+        <div style="font-weight:bold;">${icon} ${escapeHtml(group.parentLabel)}</div>
+        <div style="margin-left:12px;">${portList}</div>
+      </div>`;
+    }
+    return html;
+  };
+
+  const origin = trace.origin;
+  const originIcon = kindIcon(origin.parentKind);
+
+  panel.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <span style="font-weight:bold;font-size:13px;">Signal Trace</span>
+      <button id="closeTracePanel" style="background:none;border:none;color:#888;cursor:pointer;font-size:16px;">&times;</button>
+    </div>
+    <div style="padding:4px 6px;border:1px solid #ffc857;border-radius:4px;margin-bottom:8px;background:rgba(255,200,87,0.08);">
+      <span style="color:#ffc857;">Origin:</span> ${originIcon} <strong>${escapeHtml(origin.parentLabel)}</strong>
+      . ${escapeHtml(origin.portName)}
+    </div>
+    ${renderSteps(trace.upstream, "#72d7a7", "\u25b2 Upstream (sources)")}
+    ${renderSteps(trace.downstream, "#8cc9ff", "\u25bc Downstream (sinks)")}
+    <div style="color:#555;margin-top:8px;font-size:10px;">Double-click a port to trace. Click background to clear.</div>
+  `;
+
+  document.getElementById("closeTracePanel").addEventListener("click", () => {
+    if (state.cy) {
+      state.cy.elements(
+        ".signal-trace-upstream, .signal-trace-downstream, .signal-trace-origin, .signal-trace-dimmed"
+      ).removeClass(
+        "signal-trace-upstream signal-trace-downstream signal-trace-origin signal-trace-dimmed"
+      );
+    }
+    state.signalTrace = null;
+    panel.remove();
+  });
+}
+
 function renderInspector() {
   const summary = state.summary || {};
   const breadcrumbText = state.breadcrumb.length ? state.breadcrumb.join(" > ") : "(none)";
