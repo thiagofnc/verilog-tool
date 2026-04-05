@@ -109,6 +109,13 @@
               <h3>Connectivity Viewer</h3>
               <p>Select a module from the hierarchy tree to render internal wiring.</p>
             </div>
+            <div id="schematicSearch" class="schematic-search">
+              <input id="searchInput" type="text" placeholder="Search nodes..." aria-label="Search schematic" />
+              <span id="searchCount" class="search-count"></span>
+              <button id="searchPrev" type="button" class="search-nav" aria-label="Previous match">&#9650;</button>
+              <button id="searchNext" type="button" class="search-nav" aria-label="Next match">&#9660;</button>
+              <button id="searchClose" type="button" class="search-close" aria-label="Close search">&times;</button>
+            </div>
             <div id="hoverTooltip" class="hover-tooltip" role="tooltip"></div>
             <div id="alwaysDetailOverlay" class="always-detail-overlay hidden">
               <div class="always-detail-panel">

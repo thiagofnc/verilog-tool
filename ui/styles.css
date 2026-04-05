@@ -621,6 +621,83 @@ body {
   font-size: 11px;
 }
 
+/* ── Schematic search bar ────────────────────────────────── */
+
+.schematic-search {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(24, 24, 27, 0.95);
+  border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-md);
+  padding: 4px 6px;
+  backdrop-filter: blur(4px);
+}
+
+.schematic-search input {
+  font-family: inherit;
+  font-size: 11px;
+  background: var(--surface-0);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  padding: 4px 8px;
+  width: 180px;
+  outline: none;
+  transition: border-color 120ms ease;
+}
+
+.schematic-search input:focus {
+  border-color: var(--border-focus);
+}
+
+.search-count {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  min-width: 48px;
+  text-align: center;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.search-nav {
+  font-family: inherit;
+  font-size: 9px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  padding: 3px 6px;
+  cursor: pointer;
+  line-height: 1;
+  transition: border-color 100ms ease, color 100ms ease;
+}
+
+.search-nav:hover {
+  border-color: var(--probe);
+  color: var(--probe);
+}
+
+.search-close {
+  font-family: inherit;
+  font-size: 14px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  transition: color 100ms ease;
+}
+
+.search-close:hover {
+  color: var(--text-primary);
+}
+
 /* ── Hover tooltip ───────────────────────────────────────── */
 
 .hover-tooltip {

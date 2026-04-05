@@ -1059,6 +1059,35 @@ function ensureCytoscape() {
           opacity: 0.08,
         },
       },
+      // ── Search match highlight ──────────────────────────────
+      {
+        selector: "node.search-match",
+        style: {
+          "border-color": "#f59e0b",
+          "border-width": 2.5,
+          "z-index": 150,
+        },
+      },
+      {
+        selector: "node.search-active",
+        style: {
+          "border-color": "#22d3ee",
+          "border-width": 3,
+          "z-index": 160,
+        },
+      },
+      {
+        selector: "node.search-dimmed",
+        style: {
+          opacity: 0.15,
+        },
+      },
+      {
+        selector: "edge.search-dimmed",
+        style: {
+          opacity: 0.06,
+        },
+      },
       // ── Bus width label on trunk segments ───────────────────
       {
         selector: 'edge[route_segment = 1][segment_role = "trunk"][bus_width_label]',
@@ -3782,6 +3811,167 @@ folderInput?.addEventListener("change", () => {
   state.folder = folderInput.value;
 });
 
+
+// ═══════════════════════════════════════════════════════════════════
+// Schematic Search
+// ═══════════════════════════════════════════════════════════════════
+
+const searchBar = document.getElementById("schematicSearch");
+const searchInput = document.getElementById("searchInput");
+const searchCount = document.getElementById("searchCount");
+const searchPrevBtn = document.getElementById("searchPrev");
+const searchNextBtn = document.getElementById("searchNext");
+const searchCloseBtn = document.getElementById("searchClose");
+
+const searchState = {
+  matches: [],      // array of Cytoscape node references
+  activeIndex: -1,  // which match is currently focused
+  query: "",
+};
+
+function openSearch() {
+  searchInput.focus();
+  searchInput.select();
+}
+
+function closeSearch() {
+  searchInput.value = "";
+  clearSearchHighlights();
+  searchCount.textContent = "";
+  searchState.matches = [];
+  searchState.activeIndex = -1;
+  searchState.query = "";
+  searchInput.blur();
+}
+
+function clearSearchHighlights() {
+  if (!state.cy) return;
+  state.cy.elements(".search-match, .search-active, .search-dimmed").removeClass("search-match search-active search-dimmed");
+}
+
+function getSearchableText(node) {
+  const d = node.data();
+  const parts = [];
+  if (d.label) parts.push(d.label);
+  if (d.instance_name) parts.push(d.instance_name);
+  if (d.module_name) parts.push(d.module_name);
+  if (d.port_name) parts.push(d.port_name);
+  if (d.net_label_text) parts.push(d.net_label_text);
+  if (d.display_label) parts.push(d.display_label);
+  if (d.id) parts.push(d.id);
+  return parts.join(" ").toLowerCase();
+}
+
+function executeSearch(query) {
+  clearSearchHighlights();
+  searchState.query = query;
+  searchState.matches = [];
+  searchState.activeIndex = -1;
+
+  if (!state.cy || !query.trim()) {
+    searchCount.textContent = "";
+    return;
+  }
+
+  const q = query.trim().toLowerCase();
+
+  // Filter to visible, meaningful nodes (skip route_anchor, etc.)
+  const skipKinds = new Set(["route_anchor"]);
+  state.cy.nodes().forEach((node) => {
+    const kind = node.data("kind");
+    if (skipKinds.has(kind)) return;
+    if (getSearchableText(node).includes(q)) {
+      searchState.matches.push(node);
+    }
+  });
+
+  if (searchState.matches.length === 0) {
+    searchCount.textContent = "0 / 0";
+    return;
+  }
+
+  // Highlight all matches and dim non-matches
+  const matchCollection = state.cy.collection();
+  searchState.matches.forEach((n) => matchCollection.merge(n));
+  matchCollection.addClass("search-match");
+
+  // Dim everything not matched
+  state.cy.elements().not(matchCollection).not(matchCollection.connectedEdges()).addClass("search-dimmed");
+
+  // Focus on the first match
+  searchState.activeIndex = 0;
+  goToActiveMatch();
+}
+
+function goToActiveMatch() {
+  if (!state.cy || searchState.matches.length === 0) return;
+
+  // Remove previous active highlight
+  state.cy.nodes(".search-active").removeClass("search-active");
+
+  const idx = searchState.activeIndex;
+  const node = searchState.matches[idx];
+  node.addClass("search-active");
+
+  searchCount.textContent = `${idx + 1} / ${searchState.matches.length}`;
+
+  // Center on the active match with animation
+  state.cy.animate({
+    center: { eles: node },
+    duration: 250,
+  });
+}
+
+function searchNext() {
+  if (searchState.matches.length === 0) return;
+  searchState.activeIndex = (searchState.activeIndex + 1) % searchState.matches.length;
+  goToActiveMatch();
+}
+
+function searchPrev() {
+  if (searchState.matches.length === 0) return;
+  searchState.activeIndex = (searchState.activeIndex - 1 + searchState.matches.length) % searchState.matches.length;
+  goToActiveMatch();
+}
+
+// Debounce helper for live search
+let searchTimeout = null;
+searchInput?.addEventListener("input", () => {
+  clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(() => {
+    executeSearch(searchInput.value);
+  }, 200);
+});
+
+searchInput?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    if (e.shiftKey) {
+      searchPrev();
+    } else {
+      searchNext();
+    }
+  }
+  if (e.key === "Escape") {
+    e.preventDefault();
+    closeSearch();
+  }
+});
+
+searchNextBtn?.addEventListener("click", searchNext);
+searchPrevBtn?.addEventListener("click", searchPrev);
+searchCloseBtn?.addEventListener("click", closeSearch);
+
+// Ctrl+F / Cmd+F to open search when graph canvas is present
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "f") {
+    // Only intercept if a graph is loaded
+    if (state.cy && state.cy.elements().length) {
+      e.preventDefault();
+      openSearch();
+    }
+  }
+});
 
 populateProjectOptions();
 enforcePortViewMode();
