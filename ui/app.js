@@ -395,8 +395,8 @@ function renderGraphStats(nodeCounts, edgeCounts, edgeSignalCounts) {
   const totalEdges = Object.values(edgeCounts).reduce((acc, value) => acc + value, 0);
 
   const pills = [
-    `<span class="stat-pill"><strong>Total nodes</strong>${totalNodes}</span>`,
-    `<span class="stat-pill"><strong>Total edges</strong>${totalEdges}</span>`,
+    `<span class="stat-pill total-nodes"><strong>Total nodes</strong>${totalNodes}</span>`,
+    `<span class="stat-pill total-edges"><strong>Total edges</strong>${totalEdges}</span>`,
   ];
 
   for (const kind of nodeKinds) {
