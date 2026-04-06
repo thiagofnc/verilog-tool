@@ -1,4 +1,4 @@
-﻿# rtl_arch_visualizer
+﻿# Veritas: Verilog Design Tool
 
 Backend + API + browser UI for scanning and analyzing Verilog/SystemVerilog projects. The current build is focused on hierarchy exploration, module-level connectivity inspection, and schematic-style visualization of how signals move through a design.
 
