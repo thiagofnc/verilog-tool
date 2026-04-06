@@ -98,8 +98,14 @@
 
           <nav id="breadcrumbBar" class="breadcrumb"></nav>
 
-          <div id="graphStats" class="graph-stats empty">
-            <p>Load a module graph to see a node/edge breakdown.</p>
+          <div class="stats-wrapper collapsed">
+            <button id="statsToggle" class="stats-toggle" type="button" aria-expanded="false" aria-controls="graphStats">
+              <span class="stats-arrow">&#9654;</span>
+              <span id="statsLabel">Stats</span>
+            </button>
+            <div id="graphStats" class="graph-stats empty">
+              <p>Load a module graph to see a node/edge breakdown.</p>
+            </div>
           </div>
 
           <div id="graphCanvas" class="graph-canvas">

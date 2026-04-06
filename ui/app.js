@@ -57,6 +57,7 @@ const hierarchyTree = document.getElementById("hierarchyTree");
 const breadcrumbBar = document.getElementById("breadcrumbBar");
 const graphTag = document.getElementById("graphTag");
 const graphStats = document.getElementById("graphStats");
+const statsToggle = document.getElementById("statsToggle");
 const graphPreview = document.getElementById("graphPreview");
 const graphCanvas = document.getElementById("graphCanvas");
 const graphEmpty = document.getElementById("graphEmpty");
@@ -3760,6 +3761,12 @@ refreshBtn?.addEventListener("click", async () => {
     setStatus("Refresh failed", "error");
     inspector.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
   }
+});
+
+statsToggle?.addEventListener("click", () => {
+  const wrapper = statsToggle.closest(".stats-wrapper");
+  const collapsed = wrapper.classList.toggle("collapsed");
+  statsToggle.setAttribute("aria-expanded", String(!collapsed));
 });
 
 fitBtn?.addEventListener("click", () => {

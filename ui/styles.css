@@ -492,6 +492,47 @@ body {
   color: var(--module);
 }
 
+/* ── Stats toggle ───────────────────────────────────────── */
+
+.stats-wrapper {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.stats-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.stats-toggle:hover {
+  color: var(--text-primary);
+}
+
+.stats-arrow {
+  display: inline-block;
+  font-size: 8px;
+  transition: transform 0.15s ease;
+}
+
+.stats-wrapper.collapsed .stats-arrow {
+  transform: rotate(0deg);
+}
+
+.stats-wrapper:not(.collapsed) .stats-arrow {
+  transform: rotate(90deg);
+}
+
+.stats-wrapper.collapsed .graph-stats {
+  display: none;
+}
+
 /* ── Graph stats ─────────────────────────────────────────── */
 
 .graph-stats {
@@ -499,7 +540,6 @@ body {
   flex-wrap: wrap;
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
-  border-bottom: 1px solid var(--border-subtle);
   align-items: center;
 }
 
