@@ -12,14 +12,22 @@ from pydantic import BaseModel, Field
 try:
     from app.json_exporter import project_to_dict
     from app.project_service import PARSER_CHOICES, ProjectService
+    from app.signal_tracer import trace_signal
 except ImportError:  # Supports running as: python app/main.py
     from json_exporter import project_to_dict
     from project_service import PARSER_CHOICES, ProjectService
+    from signal_tracer import trace_signal
 
 
 class LoadProjectRequest(BaseModel):
     folder: str = Field(..., description="Root folder to scan")
     parser_backend: str = Field(default="pyverilog", description="pyverilog or simple")
+
+
+class TraceSignalRequest(BaseModel):
+    module: str = Field(..., description="Module scope in which the signal lives")
+    signal: str = Field(..., description="Signal or port name to trace")
+    max_hops: int = Field(default=500, description="Max hops per direction")
 
 
 class _AppState:
@@ -157,6 +165,23 @@ def get_module_connectivity_graph(
                 schematic_mode=schematic_mode,
             )
     except (RuntimeError, ValueError) as exc:
+        raise _bad_request(str(exc)) from exc
+
+
+@app.post("/api/signal/trace")
+def trace_signal_endpoint(payload: TraceSignalRequest) -> dict[str, object]:
+    try:
+        with state_lock:
+            project = state.service.get_project()
+            return trace_signal(
+                project,
+                module_name=payload.module,
+                signal=payload.signal,
+                max_hops=max(1, payload.max_hops),
+            )
+    except ValueError as exc:
+        raise _bad_request(str(exc)) from exc
+    except RuntimeError as exc:
         raise _bad_request(str(exc)) from exc
 
 

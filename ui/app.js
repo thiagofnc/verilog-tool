@@ -3313,6 +3313,356 @@ function renderCyGraph(graph) {
     stop: showGraph,
   }).run();
 }
+// ── Cross-module signal trace ────────────────────────────────────────────
+// Extracts a traceable {module, signal} from the current node/edge selection.
+function getTraceableSelection() {
+  const mod = state.selectedModule;
+  if (!mod) return null;
+
+  const node = state.selectedNode;
+  if (node) {
+    if (node.kind === "module_io" || node.kind === "instance_port" || node.kind === "process_port") {
+      const sig = node.port_name || node.label;
+      if (sig) return { module: mod, signal: sig, label: `${mod}.${sig}` };
+    }
+    if (node.kind === "assign" && node.target_signal) {
+      return { module: mod, signal: node.target_signal, label: `${mod}.${node.target_signal}` };
+    }
+    if (node.kind === "net") {
+      const sig = node.label || node.id;
+      if (sig) return { module: mod, signal: sig, label: `${mod}.${sig}` };
+    }
+  }
+
+  const edge = state.selectedEdge;
+  if (edge) {
+    const sig = (edge.nets && edge.nets[0]) || edge.net || edge.signal_name;
+    if (sig) return { module: mod, signal: sig, label: `${mod}.${sig}` };
+  }
+
+  return null;
+}
+
+async function requestCrossModuleTrace(moduleName, signal) {
+  try {
+    setStatus(`Tracing ${moduleName}.${signal}...`, "loading");
+    const response = await fetch(`${API_BASE}/api/signal/trace`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ module: moduleName, signal, max_hops: 500 }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: response.statusText }));
+      throw new Error(err.detail || `HTTP ${response.status}`);
+    }
+    const trace = await response.json();
+    renderCrossModuleTracePanel(trace);
+    setStatus(
+      `Trace: ${trace.fanin.length} upstream, ${trace.fanout.length} downstream${trace.truncated ? " (truncated)" : ""}`,
+      "ok"
+    );
+  } catch (exc) {
+    setStatus(`Trace failed: ${exc.message || exc}`, "error");
+  }
+}
+
+// ── Trace rendering: role/op helpers ────────────────────────────────────
+const TRACE_ROLE_STYLE = {
+  driver:    { color: "#22d3ee", label: "DRIVER" },
+  compute:   { color: "#facc15", label: "COMPUTE" },
+  pipeline:  { color: "#f472b6", label: "PIPELINE" },
+  transport: { color: "#a1a1aa", label: "TRANSPORT" },
+  load:      { color: "#60a5fa", label: "LOAD" },
+  unknown:   { color: "#71717a", label: "STEP" },
+};
+
+const TRACE_OP_BADGE = {
+  arithmetic: { color: "#fb923c", label: "+−×" },
+  comparison: { color: "#a78bfa", label: "=?" },
+  logic:      { color: "#34d399", label: "&|^" },
+  mux:        { color: "#e879f9", label: "MUX" },
+  wire:       null,
+};
+
+function traceRoleStyle(role) {
+  return TRACE_ROLE_STYLE[role] || TRACE_ROLE_STYLE.unknown;
+}
+
+function traceHopIsMeaningful(hop) {
+  // Used for summary view: only compute + pipeline + module-crossings count.
+  if (hop.role === "compute") return true;
+  if (hop.role === "pipeline") return true;
+  if (hop.crosses) return true;
+  return false;
+}
+
+// Groups hops by (module, signal, block_name) so that e.g. ten always-assignments
+// to `imm` in one block become a single summarized entry with a variant count.
+function groupTraceHops(hops) {
+  const groups = [];
+  for (const h of hops) {
+    const key = `${h.module}::${h.signal}::${h.role}::${h.block_name || ""}::${h.next_module || ""}::${h.next_signal || ""}`;
+    const last = groups[groups.length - 1];
+    if (last && last.key === key) {
+      last.items.push(h);
+    } else {
+      groups.push({ key, items: [h] });
+    }
+  }
+  return groups.map((g) => {
+    const first = g.items[0];
+    const variantCount = g.items.length;
+    // Collect distinct op_categories within the group for a richer badge set.
+    const ops = new Set();
+    for (const h of g.items) {
+      if (h.op_category && h.op_category !== "wire") ops.add(h.op_category);
+    }
+    return {
+      module: first.module,
+      signal: first.signal,
+      role: first.role,
+      kind: first.kind,
+      label: first.label,
+      detail: first.detail,
+      expression: first.expression,
+      block_name: first.block_name,
+      process_style: first.process_style,
+      blocking: first.blocking,
+      crosses: first.crosses,
+      next_module: first.next_module,
+      next_signal: first.next_signal,
+      op_categories: Array.from(ops),
+      variants: variantCount,
+      raw: g.items,
+    };
+  });
+}
+
+function formatHopHeadline(group) {
+  // Short, readable headline for one grouped hop.
+  if (group.role === "pipeline") {
+    const expr = group.expression ? ` ← ${group.expression}` : "";
+    return `${group.signal}${expr}`;
+  }
+  if (group.role === "compute") {
+    if (group.kind === "assign" || group.kind === "always") {
+      return group.detail || `${group.signal} = ${group.expression || "?"}`;
+    }
+    if (group.kind === "gate") {
+      return group.detail || group.label;
+    }
+  }
+  if (group.role === "transport") {
+    if (group.crosses === "down") {
+      return `\u2193 ${group.next_module}.${group.next_signal}`;
+    }
+    if (group.crosses === "up") {
+      return `\u2191 ${group.next_module}.${group.next_signal}`;
+    }
+    return group.label || group.detail;
+  }
+  return group.label || group.signal;
+}
+
+function renderTraceBadges(group) {
+  const parts = [];
+  if (group.variants > 1) {
+    parts.push(
+      `<span style="background:#3f3f46;color:#e4e4e7;padding:0 5px;border-radius:8px;font-size:9px;margin-left:4px;">×${group.variants}</span>`
+    );
+  }
+  if (group.process_style === "seq") {
+    parts.push(
+      `<span style="background:rgba(244,114,182,0.18);color:#f9a8d4;padding:0 5px;border-radius:8px;font-size:9px;margin-left:4px;">clocked</span>`
+    );
+  }
+  for (const op of group.op_categories || []) {
+    const badge = TRACE_OP_BADGE[op];
+    if (!badge) continue;
+    parts.push(
+      `<span style="background:rgba(255,255,255,0.04);color:${badge.color};padding:0 5px;border-radius:8px;font-size:9px;margin-left:4px;border:1px solid ${badge.color}33;">${badge.label}</span>`
+    );
+  }
+  return parts.join("");
+}
+
+function renderCrossModuleTracePanel(trace) {
+  if (!trace) {
+    const existing = document.getElementById("crossTracePanel");
+    if (existing) existing.remove();
+    return;
+  }
+
+  let panel = document.getElementById("crossTracePanel");
+  if (!panel) {
+    panel = document.createElement("div");
+    panel.id = "crossTracePanel";
+    panel.style.cssText = `
+      position: absolute; top: 8px; right: 8px; z-index: 210;
+      background: #18181b; border: 1px solid rgba(255,255,255,0.10); border-radius: 4px;
+      padding: 10px 12px; min-width: 340px; max-width: 520px;
+      max-height: 78vh; overflow-y: auto; color: #e4e4e7;
+      font-family: 'IBM Plex Mono', Consolas, Monaco, monospace; font-size: 11px;
+    `;
+    const canvas = document.getElementById("graphCanvas");
+    if (canvas) canvas.appendChild(panel);
+  }
+
+  // Persist the expand/collapse mode between re-renders.
+  const modeKey = "__traceViewMode";
+  const mode = panel[modeKey] || "summary"; // "summary" | "details"
+  panel[modeKey] = mode;
+
+  const groupedFanin = groupTraceHops(trace.fanin || []);
+  const groupedFanout = groupTraceHops(trace.fanout || []);
+
+  // Summary view: critical path only (compute + pipeline + boundary crossings).
+  const summaryFanin = groupedFanin.filter(traceHopIsMeaningful);
+  const summaryFanout = groupedFanout.filter(traceHopIsMeaningful);
+
+  // Fan-out collapse: cap at this many entries in summary view.
+  const FANOUT_SUMMARY_CAP = 5;
+  const fanoutShown = mode === "summary"
+    ? summaryFanout.slice(0, FANOUT_SUMMARY_CAP)
+    : groupedFanout;
+  const fanoutHiddenCount = mode === "summary"
+    ? Math.max(0, summaryFanout.length - FANOUT_SUMMARY_CAP)
+    : 0;
+
+  const faninList = mode === "summary" ? summaryFanin : groupedFanin;
+
+  const renderGroup = (group, accentColor) => {
+    const roleStyle = traceRoleStyle(group.role);
+    const headline = formatHopHeadline(group);
+    const badges = renderTraceBadges(group);
+    const scopeAttr = `data-trace-module="${escapeHtml(group.module)}" data-trace-signal="${escapeHtml(group.signal)}"`;
+    const nextAttr = group.next_module && group.next_signal
+      ? `data-trace-module="${escapeHtml(group.next_module)}" data-trace-signal="${escapeHtml(group.next_signal)}"`
+      : "";
+
+    // Scope line: "Module.signal"
+    const scopeLine = `
+      <div style="font-size:9px;color:#71717a;letter-spacing:0.02em;">
+        <a href="#" class="xtrace-nav" data-trace-module="${escapeHtml(group.module)}" style="color:#22d3ee;text-decoration:none;">${escapeHtml(group.module)}</a><span style="color:#3f3f46;">.</span><a href="#" class="xtrace-retrace" ${scopeAttr} style="color:#a1a1aa;text-decoration:none;">${escapeHtml(group.signal)}</a>
+      </div>`;
+
+    // Role pill
+    const rolePill = `<span style="display:inline-block;background:${roleStyle.color}22;color:${roleStyle.color};padding:1px 6px;border-radius:2px;font-size:8px;font-weight:700;letter-spacing:0.08em;margin-right:6px;">${roleStyle.label}</span>`;
+
+    // Optional "follow" link for boundary crossings.
+    const followLink = nextAttr
+      ? ` <a href="#" class="xtrace-retrace" ${nextAttr} style="color:#a78bfa;text-decoration:none;font-size:9px;">[follow]</a>`
+      : "";
+
+    return `
+      <div style="margin:4px 0;padding:5px 8px;border-left:2px solid ${accentColor};background:rgba(255,255,255,0.02);border-radius:0 2px 2px 0;">
+        ${scopeLine}
+        <div style="margin-top:3px;line-height:1.5;">
+          ${rolePill}<span style="color:#e4e4e7;">${escapeHtml(headline)}</span>${badges}${followLink}
+        </div>
+      </div>`;
+  };
+
+  const renderSection = (groups, accent, heading, emptyMsg, extraFooter = "") => {
+    let html = `<div style="color:${accent};font-weight:600;margin:8px 0 4px;font-size:10px;letter-spacing:0.06em;text-transform:uppercase;">${heading}</div>`;
+    if (!groups.length) {
+      html += `<div style="color:#52525b;margin:2px 0 4px 2px;font-size:10px;">${emptyMsg}</div>`;
+      return html;
+    }
+    html += groups.map((g) => renderGroup(g, accent)).join("");
+    if (extraFooter) html += extraFooter;
+    return html;
+  };
+
+  const origin = trace.origin || {};
+  const modeToggle = `
+    <button id="traceModeToggle" style="background:none;border:1px solid #3f3f46;color:#a1a1aa;padding:2px 8px;border-radius:2px;cursor:pointer;font-size:9px;letter-spacing:0.06em;text-transform:uppercase;">
+      ${mode === "summary" ? "Show details" : "Show summary"}
+    </button>`;
+
+  const totals = `
+    <div style="color:#71717a;font-size:9px;margin-top:2px;">
+      ${mode === "summary"
+        ? `${summaryFanin.length} key driver${summaryFanin.length === 1 ? "" : "s"} / ${summaryFanout.length} key load${summaryFanout.length === 1 ? "" : "s"} (filtered from ${groupedFanin.length + groupedFanout.length})`
+        : `${groupedFanin.length + groupedFanout.length} grouped steps (${(trace.fanin || []).length + (trace.fanout || []).length} raw)`}
+    </div>`;
+
+  const fanoutFooter = fanoutHiddenCount > 0
+    ? `<div style="margin:4px 0 0 2px;font-size:10px;color:#71717a;">+ ${fanoutHiddenCount} more load${fanoutHiddenCount === 1 ? "" : "s"} <a href="#" id="traceExpandFanout" style="color:#22d3ee;text-decoration:none;">expand</a></div>`
+    : "";
+
+  panel.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;">
+      <span style="font-weight:600;font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:#a1a1aa;">Signal Trace</span>
+      <div style="display:flex;gap:6px;align-items:center;">
+        ${modeToggle}
+        <button id="closeCrossTracePanel" style="background:none;border:none;color:#52525b;cursor:pointer;font-size:16px;line-height:1;">&times;</button>
+      </div>
+    </div>
+    <div style="padding:5px 8px;border:1px solid rgba(34,211,238,0.3);border-radius:3px;margin-bottom:6px;background:rgba(34,211,238,0.06);">
+      <div style="color:#22d3ee;font-size:9px;font-weight:600;letter-spacing:0.08em;">ORIGIN</div>
+      <div style="margin-top:2px;"><strong style="color:#e4e4e7;">${escapeHtml(origin.module || "")}</strong><span style="color:#71717a;">.</span>${escapeHtml(origin.signal || "")}</div>
+      ${totals}
+    </div>
+    ${renderSection(
+      faninList,
+      "#4ade80",
+      "\u25b2 Fan-in (what drives it)",
+      mode === "summary" ? "(no meaningful drivers — try details view)" : "(no drivers found)"
+    )}
+    ${renderSection(
+      fanoutShown,
+      "#60a5fa",
+      "\u25bc Fan-out (what it drives)",
+      mode === "summary" ? "(no meaningful loads — try details view)" : "(no loads found)",
+      fanoutFooter
+    )}
+    ${trace.truncated ? `<div style="color:#f59e0b;margin-top:6px;font-size:9px;">Result truncated at max_hops.</div>` : ""}
+    <div style="color:#3f3f46;margin-top:8px;font-size:9px;line-height:1.5;">
+      Click <span style="color:#22d3ee;">module</span> to open it. Click signal / [follow] to re-trace.
+    </div>
+  `;
+
+  panel.querySelector("#closeCrossTracePanel")?.addEventListener("click", () => {
+    panel.remove();
+  });
+
+  panel.querySelector("#traceModeToggle")?.addEventListener("click", () => {
+    panel[modeKey] = panel[modeKey] === "summary" ? "details" : "summary";
+    renderCrossModuleTracePanel(trace);
+  });
+
+  panel.querySelector("#traceExpandFanout")?.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    panel[modeKey] = "details";
+    renderCrossModuleTracePanel(trace);
+  });
+
+  panel.querySelectorAll(".xtrace-nav").forEach((el) => {
+    el.addEventListener("click", async (ev) => {
+      ev.preventDefault();
+      const mod = ev.currentTarget.getAttribute("data-trace-module");
+      if (mod && mod !== state.selectedModule) {
+        await loadGraph(mod);
+      }
+    });
+  });
+
+  panel.querySelectorAll(".xtrace-retrace").forEach((el) => {
+    el.addEventListener("click", async (ev) => {
+      ev.preventDefault();
+      const mod = ev.currentTarget.getAttribute("data-trace-module");
+      const sig = ev.currentTarget.getAttribute("data-trace-signal");
+      if (mod && sig) {
+        if (mod !== state.selectedModule) {
+          await loadGraph(mod);
+        }
+        requestCrossModuleTrace(mod, sig);
+      }
+    });
+  });
+}
+
 function renderSignalTracePanel(trace) {
   if (!trace) {
     const existing = document.getElementById("signalTracePanel");
@@ -3413,6 +3763,10 @@ function renderSignalTracePanel(trace) {
 function renderInspector() {
   const summary = state.summary || {};
   const breadcrumbText = state.breadcrumb.length ? state.breadcrumb.join(" > ") : "(none)";
+  const traceable = getTraceableSelection();
+  const traceButton = traceable
+    ? `<button id="traceSignalBtn" data-trace-module="${escapeHtml(traceable.module)}" data-trace-signal="${escapeHtml(traceable.signal)}" style="margin-top:8px;padding:4px 10px;background:#22d3ee;color:#18181b;border:none;border-radius:3px;cursor:pointer;font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;">Trace ${escapeHtml(traceable.label)}</button>`
+    : "";
 
   let selectionBlock = "";
   if (state.selectedNode) {
@@ -3482,7 +3836,17 @@ function renderInspector() {
     <div><span class="k">Schematic mode:</span> ${escapeHtml(state.schematicMode)}</div>
     <div><span class="k">Breadcrumb:</span><br>${escapeHtml(breadcrumbText)}</div>
     ${selectionBlock}
+    ${traceButton}
   `;
+
+  const btn = document.getElementById("traceSignalBtn");
+  if (btn) {
+    btn.addEventListener("click", () => {
+      const mod = btn.getAttribute("data-trace-module");
+      const sig = btn.getAttribute("data-trace-signal");
+      if (mod && sig) requestCrossModuleTrace(mod, sig);
+    });
+  }
 }
 
 function showAlwaysDetail(data) {
