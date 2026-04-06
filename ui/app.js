@@ -4233,9 +4233,11 @@ function goToActiveMatch() {
 
   searchCount.textContent = `${idx + 1} / ${searchState.matches.length}`;
 
-  // Center on the active match with animation
+  // Center on the active match, zooming in if currently too far out
+  const targetZoom = Math.max(state.cy.zoom(), 1);
   state.cy.animate({
     center: { eles: node },
+    zoom: targetZoom,
     duration: 250,
   });
 }
