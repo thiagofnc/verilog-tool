@@ -60,17 +60,6 @@
           <div class="canvas-header">
             <h2>Schematic</h2>
             <div class="canvas-actions">
-              <label class="mini-control" for="graphModeSelect">
-                mode
-                <select id="graphModeSelect" aria-label="Graph mode">
-                  <option value="compact">compact</option>
-                  <option value="detailed">detailed</option>
-                </select>
-              </label>
-              <label class="mini-check" for="aggregateToggle">
-                <input id="aggregateToggle" type="checkbox" checked />
-                aggregate
-              </label>
               <label class="mini-check" for="showUnknownToggle">
                 <input id="showUnknownToggle" type="checkbox" />
                 unknown
@@ -78,14 +67,6 @@
               <label class="mini-check" for="portViewToggle">
                 <input id="portViewToggle" type="checkbox" checked />
                 schematic
-              </label>
-              <label class="mini-control" for="schematicModeSelect">
-                view
-                <select id="schematicModeSelect" aria-label="Schematic mode">
-                  <option value="full">full</option>
-                  <option value="simplified">simplified</option>
-                  <option value="bus">bus-centric</option>
-                </select>
               </label>
               <span id="graphTag">No graph loaded</span>
               <button id="fitBtn" type="button">Fit</button>
@@ -131,7 +112,6 @@
             </div>
           </div>
 
-          <pre id="graphPreview" class="graph-preview"></pre>
         </section>
 
         <aside class="panel panel-right">

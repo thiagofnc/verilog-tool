@@ -74,6 +74,7 @@ html,
 body {
   margin: 0;
   height: 100%;
+  overflow: hidden;
   font-family: "IBM Plex Mono", "Consolas", "Monaco", monospace;
   font-size: 13px;
   line-height: 1.45;
@@ -85,9 +86,10 @@ body {
 /* ── App shell ───────────────────────────────────────────── */
 
 .app-shell {
-  min-height: 100%;
+  height: 100%;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 /* ── Topbar ──────────────────────────────────────────────── */
@@ -381,8 +383,9 @@ body {
 
 .panel-center {
   display: grid;
-  grid-template-rows: auto auto auto 1fr auto;
+  grid-template-rows: auto auto auto 1fr;
   min-height: 0;
+  overflow: hidden;
   border-right: none;
   border-left: none;
 }

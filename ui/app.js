@@ -46,11 +46,8 @@ const parserSelect = document.getElementById("parserSelect");
 const loadBtn = document.getElementById("loadBtn");
 const refreshBtn = document.getElementById("refreshBtn");
 const fitBtn = document.getElementById("fitBtn");
-const graphModeSelect = document.getElementById("graphModeSelect");
-const aggregateToggle = document.getElementById("aggregateToggle");
 const showUnknownToggle = document.getElementById("showUnknownToggle");
 const portViewToggle = document.getElementById("portViewToggle");
-const schematicModeSelect = document.getElementById("schematicModeSelect");
 const statusBadge = document.getElementById("statusBadge");
 const topList = document.getElementById("topList");
 const hierarchyTree = document.getElementById("hierarchyTree");
@@ -58,7 +55,6 @@ const breadcrumbBar = document.getElementById("breadcrumbBar");
 const graphTag = document.getElementById("graphTag");
 const graphStats = document.getElementById("graphStats");
 const statsToggle = document.getElementById("statsToggle");
-const graphPreview = document.getElementById("graphPreview");
 const graphCanvas = document.getElementById("graphCanvas");
 const graphEmpty = document.getElementById("graphEmpty");
 const cyGraph = document.getElementById("cyGraph");
@@ -189,32 +185,9 @@ function countEdgeSignalClasses(edges) {
 }
 
 function enforcePortViewMode() {
-  if (!graphModeSelect || !aggregateToggle) {
-    return;
-  }
-
-  if (state.portView) {
-    if (state.graphMode !== "compact") {
-      state.graphMode = "compact";
-    }
-    state.aggregateEdges = true;
-
-    graphModeSelect.value = "compact";
-    graphModeSelect.disabled = true;
-    graphModeSelect.title = "Schematic view uses compact connectivity as its source graph";
-
-    aggregateToggle.checked = true;
-    aggregateToggle.disabled = true;
-    aggregateToggle.title = "Schematic view bundles edges internally";
-    schematicModeSelect.disabled = false;
-    return;
-  }
-
-  graphModeSelect.disabled = false;
-  graphModeSelect.title = "";
-  aggregateToggle.disabled = false;
-  aggregateToggle.title = "";
-  schematicModeSelect.disabled = true;
+  // Schematic is always on, graph mode is always compact, aggregate is always true.
+  state.graphMode = "compact";
+  state.aggregateEdges = true;
 }
 
 function getEffectiveGraphMode() {
@@ -3762,7 +3735,6 @@ function renderSignalTracePanel(trace) {
 
 function renderInspector() {
   const summary = state.summary || {};
-  const breadcrumbText = state.breadcrumb.length ? state.breadcrumb.join(" > ") : "(none)";
   const traceable = getTraceableSelection();
   const traceButton = traceable
     ? `<button id="traceSignalBtn" data-trace-module="${escapeHtml(traceable.module)}" data-trace-signal="${escapeHtml(traceable.signal)}" style="margin-top:8px;padding:4px 10px;background:#22d3ee;color:#18181b;border:none;border-radius:3px;cursor:pointer;font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;">Trace ${escapeHtml(traceable.label)}</button>`
@@ -3822,19 +3794,12 @@ function renderInspector() {
   }
 
   inspector.innerHTML = `
-    <div><span class="k">Loaded folder:</span><br>${escapeHtml(summary.loaded_folder || "-")}</div>
-    <div style="margin-top:10px;"><span class="k">Parser:</span> ${escapeHtml(summary.parser_backend || "-")}</div>
+    <div><span class="k">Parser:</span> ${escapeHtml(summary.parser_backend || "-")}</div>
     <div><span class="k">Files:</span> ${summary.file_count ?? 0}</div>
     <div><span class="k">Modules:</span> ${summary.module_count ?? 0}</div>
     <div><span class="k">Top candidates:</span> ${escapeHtml((summary.top_candidates || []).join(", ") || "(none)")}</div>
     <div><span class="k">Selected top:</span> ${escapeHtml(state.selectedTop || "(none)")}</div>
-    <div><span class="k">Connectivity focus module:</span> ${escapeHtml(state.selectedModule || "(none)")}</div>
-    <div><span class="k">Graph mode:</span> ${escapeHtml(getEffectiveGraphMode())}</div>
-    <div><span class="k">Aggregate edges:</span> ${getEffectiveAggregateEdges() ? "on" : "off"}</div>
-    <div><span class="k">Show unknown:</span> ${state.showUnknownEdges ? "on" : "off"}</div>
-    <div><span class="k">Schematic view:</span> ${state.portView ? "on" : "off"}</div>
-    <div><span class="k">Schematic mode:</span> ${escapeHtml(state.schematicMode)}</div>
-    <div><span class="k">Breadcrumb:</span><br>${escapeHtml(breadcrumbText)}</div>
+    <div><span class="k">Focus module:</span> ${escapeHtml(state.selectedModule || "(none)")}</div>
     ${selectionBlock}
     ${traceButton}
   `;
@@ -3960,7 +3925,6 @@ function showAlwaysDetail(data) {
 function renderGraph(rawGraph) {
   if (!rawGraph) {
     graphTag.textContent = "No graph loaded";
-    graphPreview.textContent = "";
     clearGraphStats();
     graphEmpty.classList.remove("hidden");
     hideTooltip();
@@ -3978,30 +3942,9 @@ function renderGraph(rawGraph) {
   const edgeSignalCounts = countEdgeSignalClasses(graph.edges || []);
 
   const focus = graph.focus_module || graph.top_module || state.selectedModule || "(unknown)";
-  graphTag.textContent = `Connectivity: ${focus} | mode: ${graph.schematic_mode || graph.mode || getEffectiveGraphMode()} | schematic: ${state.portView ? "on" : "off"} | nodes: ${graph.nodes.length} | edges: ${graph.edges.length}`;
+  graphTag.textContent = `${focus} — ${graph.nodes.length} nodes / ${graph.edges.length} edges`;
   renderGraphStats(nodeCounts, edgeCounts, edgeSignalCounts);
 
-  const preview = {
-    schema_version: graph.schema_version,
-    view: graph.view,
-    focus_module: focus,
-    mode: graph.mode,
-    aggregate_edges: getEffectiveAggregateEdges(),
-    show_unknown_edges: state.showUnknownEdges,
-    port_view: state.portView,
-    schematic_mode: state.schematicMode,
-    interpretation: {
-      note: "Short local datapath links are traced. Long-span, feedback, global control, and dense scalar bundles are shown by shared net name.",
-      drilldown: "Double-click instance node to open that child module connectivity view.",
-    },
-    node_kind_counts: nodeCounts,
-    edge_kind_counts: edgeCounts,
-    edge_signal_class_counts: edgeSignalCounts,
-    sample_nodes: (graph.nodes || []).slice(0, 8),
-    sample_edges: (graph.edges || []).slice(0, 8),
-  };
-
-  graphPreview.textContent = JSON.stringify(preview, null, 2);
   renderCyGraph(graph);
 }
 
@@ -4140,44 +4083,6 @@ fitBtn?.addEventListener("click", () => {
   state.cy.fit(undefined, 30);
 });
 
-graphModeSelect?.addEventListener("change", async () => {
-  state.graphMode = graphModeSelect.value;
-  const beforeMode = state.graphMode;
-  enforcePortViewMode();
-  if (state.portView && beforeMode !== "compact") {
-    setStatus("Port view uses compact mode", "busy");
-  }
-
-  if (!state.selectedModule) {
-    return;
-  }
-
-  try {
-    setStatus("Updating mode...", "busy");
-    await loadGraph(state.selectedModule, state.breadcrumb.length ? [...state.breadcrumb] : [state.selectedModule]);
-    setStatus("Graph updated", "ok");
-  } catch (error) {
-    setStatus("Graph update failed", "error");
-    inspector.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
-  }
-});
-
-aggregateToggle?.addEventListener("change", async () => {
-  state.aggregateEdges = aggregateToggle.checked;
-  if (!state.selectedModule) {
-    return;
-  }
-
-  try {
-    setStatus("Updating edges...", "busy");
-    await loadGraph(state.selectedModule, state.breadcrumb.length ? [...state.breadcrumb] : [state.selectedModule]);
-    setStatus("Graph updated", "ok");
-  } catch (error) {
-    setStatus("Graph update failed", "error");
-    inspector.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
-  }
-});
-
 showUnknownToggle?.addEventListener("change", () => {
   state.showUnknownEdges = showUnknownToggle.checked;
   if (!state.graph) {
@@ -4206,22 +4111,6 @@ portViewToggle?.addEventListener("change", async () => {
   }
 });
 
-
-schematicModeSelect.addEventListener("change", async () => {
-  state.schematicMode = schematicModeSelect.value;
-  if (!state.selectedModule || !state.portView) {
-    return;
-  }
-
-  try {
-    setStatus("Updating schematic...", "busy");
-    await loadGraph(state.selectedModule, state.breadcrumb.length ? [...state.breadcrumb] : [state.selectedModule]);
-    setStatus("Graph updated", "ok");
-  } catch (error) {
-    setStatus("Graph update failed", "error");
-    inspector.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
-  }
-});
 
 folderInput?.addEventListener("change", () => {
   state.folder = folderInput.value;
@@ -4404,11 +4293,8 @@ document.addEventListener("keydown", (e) => {
 
 populateProjectOptions();
 enforcePortViewMode();
-graphModeSelect.value = getEffectiveGraphMode();
-aggregateToggle.checked = getEffectiveAggregateEdges();
 showUnknownToggle.checked = state.showUnknownEdges;
 portViewToggle.checked = state.portView;
-schematicModeSelect.value = state.schematicMode;
 
 clearGraphStats();
 renderBreadcrumb();
