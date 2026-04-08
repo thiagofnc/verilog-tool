@@ -1,10 +1,8 @@
 ﻿# Veritas: Verilog Design Tool
 
-Backend + API + browser UI for scanning and analyzing Verilog/SystemVerilog projects. The current build is focused on hierarchy exploration, module-level connectivity inspection, and schematic-style visualization of how signals move through a design.
+ ## Vision for the project
 
-Still deciding on the final project name: Verilogix, Inventio, Celeris, ArchRTL, Aegis, Nexus, Veritas
-
-Current favorites in order: Veritas, Zenith, ArchRTL, AstraNet, Inventio, Celeris
+ Veritas is not going to be just another HDL editor, it is going to be the backbone of RTL design, simulation and debugging. I intend on making it the central environment where engineers can move from idea to implementation to verification without constantly switching tools. Veritas will unify code editing, hierarchy exploration, connectivity visualization, signal tracing, simulation, diagnostics, and AI-assisted development into one coherent system built specifically for Verilog and SystemVerilog. Veritas will treat a design as a living system that can be explored, modified and validated continuously. Engineers should be able to open a module, understand how it fits into the larger architecture, trace signals across instances and processes, edit the source directly, run checks and simulations, and get immediate feedback in the same environment.
 
 ## Current State Preview
 
