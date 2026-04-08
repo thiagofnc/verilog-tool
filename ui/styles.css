@@ -1425,3 +1425,74 @@ body {
 .cm-jump-highlight {
   background: rgba(34, 211, 238, 0.25) !important;
 }
+
+/* ── Project load progress (modal popup) ─────────────────── */
+.load-progress {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.65);
+  font-family: "IBM Plex Mono", monospace;
+}
+.load-progress.hidden { display: none; }
+
+.load-progress-card {
+  background: #18181b;
+  border: 1px solid #2b3f4d;
+  border-radius: 6px;
+  padding: 20px 24px;
+  min-width: 420px;
+  max-width: 620px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.load-progress-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #e5e7eb;
+}
+
+.load-progress-bar {
+  position: relative;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.load-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: #22d3ee;
+  transition: width 120ms linear;
+}
+.load-progress.indeterminate .load-progress-fill {
+  width: 35%;
+  animation: load-progress-slide 1.2s ease-in-out infinite;
+}
+@keyframes load-progress-slide {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
+.load-progress-text {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #cbd5e1;
+  letter-spacing: 0.04em;
+}
+.load-progress-file {
+  font-size: 10px;
+  color: #94a3b8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

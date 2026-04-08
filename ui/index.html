@@ -45,6 +45,18 @@
         </div>
       </header>
 
+      <div id="loadProgress" class="load-progress hidden">
+        <div class="load-progress-card">
+          <div class="load-progress-title">Loading project</div>
+          <div class="load-progress-bar"><div id="loadProgressFill" class="load-progress-fill"></div></div>
+          <div class="load-progress-text">
+            <span id="loadProgressLabel">Loading...</span>
+            <span id="loadProgressCount"></span>
+          </div>
+          <div id="loadProgressFile" class="load-progress-file"></div>
+        </div>
+      </div>
+
       <main class="workspace" id="workspace">
         <button id="toggleLeftPanel" class="panel-toggle panel-toggle-left" type="button" aria-label="Hide hierarchy panel" title="Hide hierarchy">
           <span class="panel-toggle-arrow">&#9664;</span>

@@ -47,11 +47,15 @@ class ProjectService:
         self.parser_backend = parser_backend
         self.project: Project | None = None
 
-    def load_project(self, folder: str) -> Project:
-        """Scan + parse a project folder and cache the resulting Project."""
+    def load_project(self, folder: str, progress_callback=None) -> Project:
+        """Scan + parse a project folder and cache the resulting Project.
+
+        ``progress_callback`` is forwarded to the parser backend so callers
+        (e.g. the API's polling-progress endpoint) can observe per-file progress.
+        """
         parser = create_parser_backend(self.parser_backend)
         file_paths = scan_verilog_files(folder)
-        self.project = parser.parse_files(file_paths)
+        self.project = parser.parse_files(file_paths, progress_callback=progress_callback)
         return self.project
 
     def reparse_file(self, file_path: str) -> dict[str, Any]:

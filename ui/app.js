@@ -4063,6 +4063,81 @@ async function refreshProject() {
   await selectTop(retainedTop);
 }
 
+// ── Project load progress bar ──────────────────────────────────────
+const loadProgressEl = document.getElementById("loadProgress");
+const loadProgressFill = document.getElementById("loadProgressFill");
+const loadProgressLabel = document.getElementById("loadProgressLabel");
+const loadProgressCount = document.getElementById("loadProgressCount");
+const loadProgressFile = document.getElementById("loadProgressFile");
+
+function showLoadProgress() {
+  if (!loadProgressEl) return;
+  loadProgressEl.classList.remove("hidden");
+  loadProgressEl.classList.add("indeterminate");
+  if (loadProgressFill) loadProgressFill.style.width = "0%";
+  if (loadProgressLabel) loadProgressLabel.textContent = "Scanning project...";
+  if (loadProgressCount) loadProgressCount.textContent = "";
+  if (loadProgressFile) loadProgressFile.textContent = "";
+}
+
+function updateLoadProgress(p) {
+  if (!loadProgressEl) return;
+  const total = p.total || 0;
+  const current = p.current || 0;
+
+  if (p.stage === "parsing" && total > 0) {
+    loadProgressEl.classList.remove("indeterminate");
+    const pct = Math.max(0, Math.min(100, Math.round((current / total) * 100)));
+    if (loadProgressFill) loadProgressFill.style.width = `${pct}%`;
+    if (loadProgressLabel) loadProgressLabel.textContent = `Parsing files (${pct}%)`;
+    if (loadProgressCount) loadProgressCount.textContent = `${current} / ${total}`;
+  } else if (p.stage === "scanning") {
+    loadProgressEl.classList.add("indeterminate");
+    if (loadProgressLabel) loadProgressLabel.textContent = "Scanning project...";
+    if (loadProgressCount) loadProgressCount.textContent = "";
+  } else if (p.stage === "finalizing") {
+    loadProgressEl.classList.remove("indeterminate");
+    if (loadProgressFill) loadProgressFill.style.width = "100%";
+    if (loadProgressLabel) loadProgressLabel.textContent = "Building hierarchy...";
+    if (loadProgressCount) loadProgressCount.textContent = `${total} / ${total}`;
+  }
+
+  if (loadProgressFile) {
+    // Show only the basename so the line stays readable on long paths.
+    const f = p.current_file || "";
+    const base = f ? f.replace(/\\/g, "/").split("/").pop() : "";
+    loadProgressFile.textContent = base;
+  }
+}
+
+function hideLoadProgress() {
+  if (!loadProgressEl) return;
+  loadProgressEl.classList.add("hidden");
+  loadProgressEl.classList.remove("indeterminate");
+  if (loadProgressFill) loadProgressFill.style.width = "0%";
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function pollLoadProgress() {
+  // Poll until the backend reports done or error.
+  // Returns the final progress payload.
+  while (true) {
+    let snap;
+    try {
+      snap = await apiRequest("/api/project/load/progress");
+    } catch (err) {
+      // If polling itself fails, surface the error and stop.
+      throw err;
+    }
+    updateLoadProgress(snap);
+    if (snap.done) return snap;
+    await sleep(180);
+  }
+}
+
 async function handleLoad() {
   const folder = folderInput ? folderInput.value.trim() : state.folder;
   if (!folder) {
@@ -4073,21 +4148,42 @@ async function handleLoad() {
   state.folder = folder;
   state.parser = parserSelect ? parserSelect.value : state.parser;
 
+  showLoadProgress();
+  setStatus("Loading...", "busy");
+
   try {
-    setStatus("Loading...", "busy");
-    const summary = await apiRequest("/api/project/load", {
+    await apiRequest("/api/project/load", {
       method: "POST",
       body: JSON.stringify({ folder: state.folder, parser_backend: state.parser }),
     });
-
-    state.summary = summary;
-    renderInspector();
   } catch (error) {
+    hideLoadProgress();
     setStatus("Project load failed", "error");
     inspector.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
     renderGraph(null);
     return;
   }
+
+  let finalSnap;
+  try {
+    finalSnap = await pollLoadProgress();
+  } catch (error) {
+    hideLoadProgress();
+    setStatus("Progress polling failed", "error");
+    inspector.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
+    return;
+  }
+
+  if (finalSnap.error) {
+    hideLoadProgress();
+    setStatus("Project load failed", "error");
+    inspector.innerHTML = `<p>${escapeHtml(finalSnap.error)}</p>`;
+    renderGraph(null);
+    return;
+  }
+
+  state.summary = finalSnap.summary || null;
+  renderInspector();
 
   try {
     await refreshProject();
@@ -4100,6 +4196,8 @@ async function handleLoad() {
       <p>Project parsing succeeded with parser: <strong>${escapeHtml(state.summary?.parser_backend || state.parser)}</strong></p>
     `;
     renderGraph(null);
+  } finally {
+    hideLoadProgress();
   }
 }
 

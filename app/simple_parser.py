@@ -510,15 +510,27 @@ def _parse_modules_from_file(file_path: str) -> list[ModuleDef]:
 class SimpleRegexParser(VerilogParserBackend):
     """Approximate parser backend for quick MVP extraction of modules/ports/instances."""
 
-    def parse_files(self, file_paths: list[str]) -> Project:
+    def parse_files(self, file_paths, progress_callback=None) -> Project:
         resolved_paths = [str(Path(path).resolve()) for path in file_paths]
         source_files = [SourceFile(path=path) for path in resolved_paths]
 
+        eligible = [p for p in resolved_paths if Path(p).suffix.lower() in {".v", ".sv"}]
+        total = len(eligible)
+
         modules: list[ModuleDef] = []
-        for file_path in resolved_paths:
-            if Path(file_path).suffix.lower() not in {".v", ".sv"}:
-                continue
+        for index, file_path in enumerate(eligible):
+            if progress_callback is not None:
+                try:
+                    progress_callback(index, total, file_path)
+                except Exception:
+                    pass
             modules.extend(_parse_modules_from_file(file_path))
+
+        if progress_callback is not None and total > 0:
+            try:
+                progress_callback(total, total, eligible[-1])
+            except Exception:
+                pass
 
         if resolved_paths:
             parent_dirs = [str(Path(path).parent) for path in resolved_paths]

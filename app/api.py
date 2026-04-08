@@ -1,8 +1,8 @@
 ﻿"""FastAPI layer for project loading, queries, and basic UI serving."""
 
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from threading import Lock
+from threading import Lock, Thread
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -34,14 +34,32 @@ class ModuleSourceUpdate(BaseModel):
     content: str = Field(..., description="New full text content for the module's source file")
 
 
+@dataclass
+class _LoadProgress:
+    active: bool = False
+    done: bool = False
+    stage: str = "idle"           # idle | scanning | parsing | finalizing | done | error
+    current: int = 0
+    total: int = 0
+    current_file: str = ""
+    folder: str = ""
+    parser_backend: str = ""
+    error: str | None = None
+    summary: dict | None = None   # populated on success — same shape as load_project response
+
+
 class _AppState:
     def __init__(self) -> None:
         self.service = ProjectService(parser_backend="pyverilog")
         self.loaded_folder: str | None = None
+        self.load_progress: _LoadProgress = _LoadProgress()
 
 
 state = _AppState()
 state_lock = Lock()
+# Separate lock for load progress so a long-running parse doesn't block fast
+# read endpoints behind state_lock the entire time the user is loading.
+progress_lock = Lock()
 
 app = FastAPI(
     title="rtl_arch_visualizer API",
@@ -59,6 +77,52 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+def _run_load_in_background(folder: str, parser_backend: str) -> None:
+    """Worker thread: parse the project locally, then publish under state_lock.
+
+    Notes on locking:
+    - The parse runs against a *local* ProjectService so other API endpoints
+      can still read state.service while the (possibly long) parse is in flight.
+    - state_lock is taken only briefly at the very end to swap in the new
+      service. progress_lock is the only thing held during per-file updates.
+    """
+
+    def update(**fields) -> None:
+        with progress_lock:
+            for key, value in fields.items():
+                setattr(state.load_progress, key, value)
+
+    def on_file(current: int, total: int, current_file: str) -> None:
+        update(stage="parsing", current=current, total=total, current_file=current_file)
+
+    try:
+        update(stage="scanning", current=0, total=0, current_file="")
+        local_service = ProjectService(parser_backend=parser_backend)
+        project = local_service.load_project(folder, progress_callback=on_file)
+
+        update(stage="finalizing", current_file="")
+        tops = local_service.get_top_candidates()
+
+        summary = {
+            "loaded_folder": folder,
+            "parser_backend": parser_backend,
+            "root_path": project.root_path,
+            "file_count": len(project.source_files),
+            "module_count": len(project.modules),
+            "top_candidates": tops,
+        }
+
+        with state_lock:
+            state.service = local_service
+            state.loaded_folder = folder
+
+        update(stage="done", active=False, done=True, summary=summary, error=None)
+    except (FileNotFoundError, NotADirectoryError, ValueError, RuntimeError) as exc:
+        update(stage="error", active=False, done=True, error=str(exc))
+    except Exception as exc:  # pragma: no cover - unexpected backend failures
+        update(stage="error", active=False, done=True, error=f"Failed to load project: {exc}")
+
+
 @app.post("/api/project/load")
 def load_project(payload: LoadProjectRequest) -> dict[str, object]:
     if payload.parser_backend not in PARSER_CHOICES:
@@ -67,25 +131,50 @@ def load_project(payload: LoadProjectRequest) -> dict[str, object]:
             f"Use one of: {', '.join(PARSER_CHOICES)}"
         )
 
-    try:
-        with state_lock:
-            state.service = ProjectService(parser_backend=payload.parser_backend)
-            project = state.service.load_project(payload.folder)
-            state.loaded_folder = payload.folder
-            tops = state.service.get_top_candidates()
-    except (FileNotFoundError, NotADirectoryError, ValueError, RuntimeError) as exc:
-        raise _bad_request(str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to load project: {exc}") from exc
+    with progress_lock:
+        if state.load_progress.active:
+            raise _bad_request("A project load is already in progress.")
+        # Reset progress state for the new load.
+        state.load_progress = _LoadProgress(
+            active=True,
+            done=False,
+            stage="scanning",
+            current=0,
+            total=0,
+            current_file="",
+            folder=payload.folder,
+            parser_backend=payload.parser_backend,
+            error=None,
+            summary=None,
+        )
 
-    return {
-        "loaded_folder": payload.folder,
-        "parser_backend": payload.parser_backend,
-        "root_path": project.root_path,
-        "file_count": len(project.source_files),
-        "module_count": len(project.modules),
-        "top_candidates": tops,
-    }
+    worker = Thread(
+        target=_run_load_in_background,
+        args=(payload.folder, payload.parser_backend),
+        daemon=True,
+        name="project-load-worker",
+    )
+    worker.start()
+
+    return {"started": True, "folder": payload.folder, "parser_backend": payload.parser_backend}
+
+
+@app.get("/api/project/load/progress")
+def get_load_progress() -> dict[str, object]:
+    with progress_lock:
+        p = state.load_progress
+        return {
+            "active": p.active,
+            "done": p.done,
+            "stage": p.stage,
+            "current": p.current,
+            "total": p.total,
+            "current_file": p.current_file,
+            "folder": p.folder,
+            "parser_backend": p.parser_backend,
+            "error": p.error,
+            "summary": p.summary,
+        }
 
 
 @app.get("/api/project")
