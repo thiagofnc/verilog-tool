@@ -34,6 +34,10 @@ class ModuleSourceUpdate(BaseModel):
     content: str = Field(..., description="New full text content for the module's source file")
 
 
+class LintRequest(BaseModel):
+    content: str = Field(..., description="Verilog source text to syntax-check")
+
+
 @dataclass
 class _LoadProgress:
     active: bool = False
@@ -251,13 +255,30 @@ def update_module_source(module_name: str, payload: ModuleSourceUpdate) -> dict[
                 raise _bad_request(f"Source file not found: {src_path}")
             path.write_text(payload.content, encoding="utf-8")
 
-            # Try an incremental reparse of just this file. Fall back to a full
-            # project reparse if the set of modules defined in the file changed.
+            # Try an incremental reparse of just this file. If the set of
+            # modules defined in the file changed, only fall back to a full
+            # project reparse when no previously-known modules were lost —
+            # otherwise a syntax error in the user's edit (which makes the
+            # regex parser fail to recover any module headers) would wipe
+            # the cached project state for this file's modules and any
+            # cross-file references that depend on them.
             report = state.service.reparse_file(str(path))
             if report.get("requires_full_reparse"):
-                if state.loaded_folder:
+                old_names = set(report.get("old_modules", []))
+                new_names = set(report.get("new_modules", []))
+                lost = sorted(old_names - new_names)
+                if lost:
+                    report["fell_back_to_full_reparse"] = False
+                    report["kept_cached_project"] = True
+                    report["warning"] = (
+                        "Saved to disk, but the updated file no longer parses "
+                        f"into the previously-known modules ({', '.join(lost)}). "
+                        "The in-memory project was left untouched — fix the "
+                        "syntax error and save again to refresh."
+                    )
+                elif state.loaded_folder:
                     state.service.load_project(state.loaded_folder)
-                report["fell_back_to_full_reparse"] = True
+                    report["fell_back_to_full_reparse"] = True
             return {
                 "module": module_name,
                 "path": str(path),
@@ -268,6 +289,45 @@ def update_module_source(module_name: str, payload: ModuleSourceUpdate) -> dict[
         raise _bad_request(str(exc)) from exc
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"Failed to write source: {exc}") from exc
+
+
+@app.post("/api/lint/verilog")
+def lint_verilog(payload: LintRequest) -> dict[str, object]:
+    """Run the active parser against an in-memory Verilog snippet.
+
+    Returns a list of error descriptors with line numbers and messages so the
+    editor can highlight problems without having to save the file first.
+    Pyverilog raises ``ParseError`` strings of the form
+    ``"<filename> line:42: before: \"foo\""`` — we extract the line/token
+    out of that and pass it through. If pyverilog isn't installed we fall
+    back to the simple delimiter/keyword balance check.
+    """
+    import re
+    import tempfile
+
+    errors: list[dict[str, object]] = []
+    try:
+        from pyverilog.vparser.parser import VerilogParser, ParseError  # type: ignore
+        try:
+            parser = VerilogParser(outputdir=tempfile.gettempdir(), debug=False)
+            parser.parse(payload.content, debug=False)
+        except ParseError as exc:
+            msg = str(exc)
+            line_match = re.search(r"line:(\d+)", msg)
+            tok_match = re.search(r'before:\s*"([^"]*)"', msg)
+            errors.append({
+                "line": int(line_match.group(1)) if line_match else 1,
+                "token": tok_match.group(1) if tok_match else None,
+                "message": msg,
+            })
+        except Exception as exc:  # noqa: BLE001 — preprocessor or lexer errors
+            errors.append({"line": 1, "token": None, "message": str(exc)})
+    except ImportError:
+        # Fallback: pyverilog isn't available — do nothing server-side and let
+        # the client's local linter be the only signal.
+        return {"errors": [], "backend": "none"}
+
+    return {"errors": errors, "backend": "pyverilog"}
 
 
 @app.get("/api/project/hierarchy/{top_module}")

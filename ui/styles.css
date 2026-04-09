@@ -1426,6 +1426,35 @@ body {
   background: rgba(34, 211, 238, 0.25) !important;
 }
 
+/* ── Syntax linter markers ───────────────────────────────────────── */
+.CodeMirror .cm-lint-error-line {
+  background: rgba(239, 68, 68, 0.18) !important;
+}
+.CodeMirror.cm-s-material-darker .CodeMirror-line .cm-lint-error,
+.CodeMirror.cm-s-material-darker .CodeMirror-line .cm-lint-error span,
+.CodeMirror .cm-lint-error,
+.CodeMirror .cm-lint-error * {
+  color: #ff5252 !important;
+  text-decoration: underline wavy #ef4444 !important;
+  text-decoration-skip-ink: none;
+  background: rgba(239, 68, 68, 0.32) !important;
+  border-bottom: 1px solid #ef4444;
+}
+.CodeMirror .cm-lint-gutter {
+  width: 14px;
+}
+.cm-lint-gutter-marker {
+  color: #ef4444;
+  font-size: 14px;
+  line-height: 1;
+  text-align: center;
+  cursor: help;
+}
+#codeEditorStatus.has-errors {
+  color: #ef4444;
+  font-weight: 600;
+}
+
 /* â”€â”€ Project load progress (modal popup) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .load-progress {
   position: fixed;

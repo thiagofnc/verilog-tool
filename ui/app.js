@@ -4465,7 +4465,303 @@ const codeEditorState = {
   module: null,
   path: null,
   original: "",
+  lintMarks: [],
+  lintTimer: null,
 };
+
+// ── Verilog syntax linter ──────────────────────────────────────────
+// Lightweight client-side checker that flags unbalanced delimiters and
+// block keywords (begin/end, module/endmodule, case/endcase, …). It is
+// not a full parser — just enough to surface obvious typos as the user
+// types. Errors are highlighted via CodeMirror markText + a gutter.
+const VERILOG_BLOCK_PAIRS = {
+  begin: ["end"],
+  module: ["endmodule"],
+  case: ["endcase"],
+  casex: ["endcase"],
+  casez: ["endcase"],
+  function: ["endfunction"],
+  task: ["endtask"],
+  generate: ["endgenerate"],
+  specify: ["endspecify"],
+  fork: ["join", "join_any", "join_none"],
+  package: ["endpackage"],
+  interface: ["endinterface"],
+  class: ["endclass"],
+  config: ["endconfig"],
+  primitive: ["endprimitive"],
+  table: ["endtable"],
+};
+const VERILOG_BLOCK_OPENERS = new Set(Object.keys(VERILOG_BLOCK_PAIRS));
+const VERILOG_BLOCK_CLOSERS = new Set();
+for (const arr of Object.values(VERILOG_BLOCK_PAIRS)) {
+  for (const c of arr) VERILOG_BLOCK_CLOSERS.add(c);
+}
+
+function verilogLint(source) {
+  const errors = [];
+  const lines = source.split("\n");
+
+  // Step 1: build a "clean" copy of the source where comments and string
+  // contents are replaced with spaces, so column positions are preserved
+  // but we don't tokenize their contents.
+  const clean = lines.map((l) => l.split(""));
+  let inBlockComment = false;
+  for (let i = 0; i < lines.length; i++) {
+    const row = clean[i];
+    let inString = false;
+    for (let j = 0; j < row.length; j++) {
+      const c = row[j];
+      const next = row[j + 1];
+      if (inBlockComment) {
+        if (c === "*" && next === "/") {
+          row[j] = " "; row[j + 1] = " "; j++;
+          inBlockComment = false;
+        } else {
+          row[j] = " ";
+        }
+        continue;
+      }
+      if (inString) {
+        if (c === "\\" && next !== undefined) { row[j] = " "; row[j + 1] = " "; j++; continue; }
+        if (c === '"') { inString = false; continue; }
+        row[j] = " ";
+        continue;
+      }
+      if (c === "/" && next === "/") {
+        for (let k = j; k < row.length; k++) row[k] = " ";
+        break;
+      }
+      if (c === "/" && next === "*") {
+        row[j] = " "; row[j + 1] = " "; j++;
+        inBlockComment = true;
+        continue;
+      }
+      if (c === '"') { inString = true; continue; }
+    }
+  }
+
+  // Step 2: tokenize the cleaned source into delimiters and identifiers,
+  // tracking (line, ch) positions.
+  const stack = []; // { type, open, line, ch, length }
+  const closers = { ")": "(", "]": "[", "}": "{" };
+  const openerNames = { "(": "parenthesis", "[": "bracket", "{": "brace" };
+
+  for (let i = 0; i < clean.length; i++) {
+    const row = clean[i].join("");
+    let j = 0;
+    while (j < row.length) {
+      const c = row[j];
+      if (/\s/.test(c)) { j++; continue; }
+      if (c === "(" || c === "[" || c === "{") {
+        stack.push({ type: c, open: c, line: i, ch: j, length: 1, kind: "paren" });
+        j++;
+        continue;
+      }
+      if (c === ")" || c === "]" || c === "}") {
+        const expected = closers[c];
+        const top = stack[stack.length - 1];
+        if (!top || top.kind !== "paren" || top.open !== expected) {
+          errors.push({
+            from: { line: i, ch: j },
+            to: { line: i, ch: j + 1 },
+            msg: `Unmatched closing ${openerNames[expected] || c} '${c}'`,
+          });
+        } else {
+          stack.pop();
+        }
+        j++;
+        continue;
+      }
+      // Identifier / keyword
+      if (/[A-Za-z_]/.test(c)) {
+        let k = j + 1;
+        while (k < row.length && /[\w$]/.test(row[k])) k++;
+        const word = row.slice(j, k);
+        if (VERILOG_BLOCK_OPENERS.has(word)) {
+          stack.push({
+            type: word, open: word, line: i, ch: j, length: word.length, kind: "block",
+          });
+        } else if (VERILOG_BLOCK_CLOSERS.has(word)) {
+          // Find nearest matching block opener on the stack.
+          let matched = false;
+          for (let s = stack.length - 1; s >= 0; s--) {
+            const f = stack[s];
+            if (f.kind !== "block") continue;
+            const allowed = VERILOG_BLOCK_PAIRS[f.open] || [];
+            if (allowed.includes(word)) {
+              // Anything above this frame is unclosed.
+              for (let t = stack.length - 1; t > s; t--) {
+                const u = stack[t];
+                errors.push({
+                  from: { line: u.line, ch: u.ch },
+                  to: { line: u.line, ch: u.ch + u.length },
+                  msg: `Unclosed '${u.open}' (missing matching closer)`,
+                });
+              }
+              stack.length = s;
+              matched = true;
+              break;
+            }
+          }
+          if (!matched) {
+            errors.push({
+              from: { line: i, ch: j },
+              to: { line: i, ch: j + word.length },
+              msg: `Unmatched '${word}' with no opening block`,
+            });
+          }
+        }
+        j = k;
+        continue;
+      }
+      j++;
+    }
+  }
+
+  if (inBlockComment) {
+    errors.push({
+      from: { line: lines.length - 1, ch: 0 },
+      to: { line: lines.length - 1, ch: (lines[lines.length - 1] || "").length },
+      msg: "Unterminated block comment '/* … */'",
+    });
+  }
+
+  // Anything left on the stack is an unclosed opener.
+  for (const f of stack) {
+    errors.push({
+      from: { line: f.line, ch: f.ch },
+      to: { line: f.line, ch: f.ch + f.length },
+      msg: f.kind === "paren"
+        ? `Unclosed ${openerNames[f.open]} '${f.open}'`
+        : `Unclosed '${f.open}' (missing matching closer)`,
+    });
+  }
+
+  return errors;
+}
+
+function clearLintMarks(cm) {
+  for (const m of codeEditorState.lintMarks) {
+    try { m.clear(); } catch (_) {}
+  }
+  codeEditorState.lintMarks = [];
+  try { cm.clearGutter("cm-lint-gutter"); } catch (_) {}
+}
+
+function renderLintErrors(cm, errors) {
+  clearLintMarks(cm);
+  const byLine = new Map();
+  for (const err of errors) {
+    // Server errors are 1-indexed; CodeMirror is 0-indexed.
+    const lineIdx = Math.max(0, (err.line || 1) - 1);
+    const lineText = cm.getLine(lineIdx) || "";
+    let from = { line: lineIdx, ch: 0 };
+    let to = { line: lineIdx, ch: lineText.length };
+    if (err.token) {
+      const idx = lineText.indexOf(err.token);
+      if (idx >= 0) {
+        from = { line: lineIdx, ch: idx };
+        to = { line: lineIdx, ch: idx + err.token.length };
+      }
+    }
+    const mark = cm.markText(from, to, {
+      className: "cm-lint-error",
+      title: err.message || "Syntax error",
+    });
+    codeEditorState.lintMarks.push(mark);
+    // Also tint the entire line so the error is impossible to miss.
+    const lineHandle = cm.addLineClass(lineIdx, "background", "cm-lint-error-line");
+    codeEditorState.lintMarks.push({
+      clear: () => cm.removeLineClass(lineHandle, "background", "cm-lint-error-line"),
+    });
+    if (!byLine.has(lineIdx)) byLine.set(lineIdx, []);
+    byLine.get(lineIdx).push(err.message || "Syntax error");
+  }
+  for (const [line, msgs] of byLine.entries()) {
+    const marker = document.createElement("div");
+    marker.className = "cm-lint-gutter-marker";
+    marker.title = msgs.join("\n");
+    marker.textContent = "●";
+    try { cm.setGutterMarker(line, "cm-lint-gutter", marker); } catch (_) {}
+  }
+  const statusEl = document.getElementById("codeEditorStatus");
+  if (statusEl) {
+    statusEl.textContent = errors.length
+      ? `Line ${errors[0].line}: ${errors[0].message || "syntax error"}`
+      : "No syntax issues";
+    statusEl.classList.toggle("has-errors", errors.length > 0);
+  }
+}
+
+async function applyLint(cm) {
+  if (!cm) return;
+  // First do a fast local pass for delimiter / block-keyword balance so the
+  // user gets immediate feedback while typing.
+  const localErrors = verilogLint(cm.getValue()).map((e) => ({
+    line: e.from.line + 1,
+    token: null,
+    message: e.msg,
+    _local: true,
+    _from: e.from,
+    _to: e.to,
+  }));
+  // Then ask the server's real parser for authoritative errors.
+  let serverErrors = [];
+  try {
+    const resp = await apiRequest("/api/lint/verilog", {
+      method: "POST",
+      body: JSON.stringify({ content: cm.getValue() }),
+    });
+    if (resp && Array.isArray(resp.errors)) serverErrors = resp.errors;
+  } catch (_) {
+    // Server unreachable — fall back to local-only.
+  }
+  // Server errors take priority; show local errors only if server found none.
+  const errors = serverErrors.length ? serverErrors : localErrors.map((e) => ({
+    line: e.line,
+    token: null,
+    message: e.message,
+  }));
+  // Render local-error spans precisely when we're using the local fallback,
+  // since they have exact column ranges.
+  if (!serverErrors.length && localErrors.length) {
+    clearLintMarks(cm);
+    const byLine = new Map();
+    for (const e of localErrors) {
+      const mark = cm.markText(e._from, e._to, {
+        className: "cm-lint-error",
+        title: e.message,
+      });
+      codeEditorState.lintMarks.push(mark);
+      const lh = cm.addLineClass(e._from.line, "background", "cm-lint-error-line");
+      codeEditorState.lintMarks.push({
+        clear: () => cm.removeLineClass(lh, "background", "cm-lint-error-line"),
+      });
+      if (!byLine.has(e._from.line)) byLine.set(e._from.line, []);
+      byLine.get(e._from.line).push(e.message);
+    }
+    for (const [line, msgs] of byLine.entries()) {
+      const marker = document.createElement("div");
+      marker.className = "cm-lint-gutter-marker";
+      marker.title = msgs.join("\n");
+      marker.textContent = "●";
+      try { cm.setGutterMarker(line, "cm-lint-gutter", marker); } catch (_) {}
+    }
+    const statusEl = document.getElementById("codeEditorStatus");
+    if (statusEl) {
+      statusEl.textContent = `Line ${localErrors[0].line}: ${localErrors[0].message}`;
+      statusEl.classList.add("has-errors");
+    }
+    return;
+  }
+  renderLintErrors(cm, errors);
+}
+
+function scheduleLint(cm) {
+  if (codeEditorState.lintTimer) clearTimeout(codeEditorState.lintTimer);
+  codeEditorState.lintTimer = setTimeout(() => applyLint(cm), 350);
+}
 
 // ── Veritas overlay tokenizer ──────────────────────────────────────
 // CodeMirror's stock verilog mode tags both module type names and named-port
@@ -4582,7 +4878,20 @@ const veritasVerilogOverlay = {
 };
 
 function ensureCodeMirror() {
-  if (codeEditorState.cm) return codeEditorState.cm;
+  if (codeEditorState.cm) {
+    // Make sure the lint gutter and change listener exist on instances
+    // that may have been constructed before the linter shipped.
+    const cm = codeEditorState.cm;
+    const gutters = cm.getOption("gutters") || [];
+    if (!gutters.includes("cm-lint-gutter")) {
+      cm.setOption("gutters", [...gutters, "cm-lint-gutter"]);
+    }
+    if (!codeEditorState.lintBound) {
+      cm.on("change", () => scheduleLint(cm));
+      codeEditorState.lintBound = true;
+    }
+    return cm;
+  }
   const ta = document.getElementById("codeEditorTextarea");
   if (!ta || typeof CodeMirror === "undefined") return null;
   codeEditorState.cm = CodeMirror.fromTextArea(ta, {
@@ -4593,10 +4902,13 @@ function ensureCodeMirror() {
     tabSize: 2,
     lineWrapping: false,
     matchBrackets: true,
+    gutters: ["CodeMirror-linenumbers", "cm-lint-gutter"],
   });
   // Layer the Veritas overlay on top of the base verilog mode so module
   // types and port-connection arguments get their own token classes.
   codeEditorState.cm.addOverlay(veritasVerilogOverlay);
+  codeEditorState.cm.on("change", () => scheduleLint(codeEditorState.cm));
+  codeEditorState.lintBound = true;
   return codeEditorState.cm;
 }
 
@@ -4633,9 +4945,9 @@ async function openModuleCodeEditor(moduleName, options = {}) {
         if (options.jumpToInstance) {
           jumpToInstantiation(cm, options.jumpToInstance);
         }
+        applyLint(cm);
       }, 0);
     }
-    if (!options.jumpToInstance) setEditorStatus("Loaded.");
   } catch (error) {
     setEditorStatus(`Failed to load: ${error.message}`);
     pathEl.textContent = "";
@@ -4740,11 +5052,17 @@ async function saveModuleCodeEditor() {
   setEditorStatus("Saving and re-parsing project...");
 
   try {
-    await apiRequest(`/api/project/modules/${encodeURIComponent(codeEditorState.module)}/source`, {
+    const saveResp = await apiRequest(`/api/project/modules/${encodeURIComponent(codeEditorState.module)}/source`, {
       method: "PUT",
       body: JSON.stringify({ content }),
     });
     codeEditorState.original = content;
+    const warning = saveResp && saveResp.reparse && saveResp.reparse.warning;
+    if (warning) {
+      setEditorStatus(warning);
+      setStatus("Saved with parse warning", "warn");
+      return;
+    }
     setEditorStatus("Saved. Refreshing viewer...");
 
     // Re-parse already happened on the server. Refresh the project listing
