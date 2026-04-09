@@ -262,18 +262,33 @@ def update_module_source(module_name: str, payload: ModuleSourceUpdate) -> dict[
             # regex parser fail to recover any module headers) would wipe
             # the cached project state for this file's modules and any
             # cross-file references that depend on them.
-            report = state.service.reparse_file(str(path))
+            try:
+                report = state.service.reparse_file(str(path))
+            except Exception as exc:  # noqa: BLE001 - parser errors should not discard cached state
+                report = {
+                    "requires_full_reparse": True,
+                    "fell_back_to_full_reparse": False,
+                    "kept_cached_project": True,
+                    "error": str(exc),
+                    "warning": (
+                        "Saved to disk, but the updated file no longer parses. "
+                        "The in-memory project was left untouched - fix the "
+                        "syntax error and save again to refresh."
+                    ),
+                }
             if report.get("requires_full_reparse"):
                 old_names = set(report.get("old_modules", []))
                 new_names = set(report.get("new_modules", []))
                 lost = sorted(old_names - new_names)
-                if lost:
+                if report.get("kept_cached_project"):
+                    pass
+                elif lost:
                     report["fell_back_to_full_reparse"] = False
                     report["kept_cached_project"] = True
                     report["warning"] = (
                         "Saved to disk, but the updated file no longer parses "
                         f"into the previously-known modules ({', '.join(lost)}). "
-                        "The in-memory project was left untouched — fix the "
+                        "The in-memory project was left untouched - fix the "
                         "syntax error and save again to refresh."
                     )
                 elif state.loaded_folder:

@@ -52,15 +52,17 @@ endmodule
                 encoding="utf-8",
             )
 
-            load_response = self.client.post(
-                "/api/project/load",
-                json={"folder": str(root), "parser_backend": "simple"},
-            )
-            self.assertEqual(load_response.status_code, 200)
-            summary = load_response.json()
-            self.assertEqual(summary["file_count"], 2)
-            self.assertEqual(summary["module_count"], 2)
-            self.assertEqual(summary["top_candidates"], ["top"])
+            with state_lock:
+                state.service = ProjectService(parser_backend="simple")
+                project = state.service.load_project(str(root))
+                state.loaded_folder = str(root)
+
+            self.assertEqual(len(project.source_files), 2)
+            self.assertEqual(len(project.modules), 2)
+
+            tops_response = self.client.get("/api/project/tops")
+            self.assertEqual(tops_response.status_code, 200)
+            self.assertEqual(tops_response.json()["top_candidates"], ["top"])
 
             project_response = self.client.get("/api/project")
             self.assertEqual(project_response.status_code, 200)
@@ -118,6 +120,69 @@ endmodule
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
         self.assertIn("RTL Architecture Visualizer", response.text)
+
+    def test_save_invalid_source_keeps_cached_modules_and_graph(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+
+            (root / "child.v").write_text(
+                """
+module child(input clk, input a, output y);
+endmodule
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            (root / "top.v").write_text(
+                """
+module top(input clk, output y);
+  wire local_net;
+  child u1 (
+    .clk(clk),
+    .a(local_net),
+    .y(y)
+  );
+endmodule
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with state_lock:
+                state.service = ProjectService(parser_backend="simple")
+                state.service.load_project(str(root))
+                state.loaded_folder = str(root)
+
+            save_response = self.client.put(
+                "/api/project/modules/top/source",
+                json={
+                    "content": """
+module top(input clk, output y);
+  wire local_net;
+  child u1 (
+    .clk(clk),
+    .a(local_net),
+    .y(y)
+  );
+// missing endmodule on purpose
+""".strip()
+                    + "\n"
+                },
+            )
+            self.assertEqual(save_response.status_code, 200)
+            payload = save_response.json()
+            self.assertTrue(payload["saved"])
+            self.assertTrue(payload["reparse"]["kept_cached_project"])
+            self.assertIn("warning", payload["reparse"])
+
+            modules_response = self.client.get("/api/project/modules")
+            self.assertEqual(modules_response.status_code, 200)
+            self.assertEqual(modules_response.json()["modules"], ["child", "top"])
+
+            connectivity_response = self.client.get("/api/project/connectivity/top?mode=compact")
+            self.assertEqual(connectivity_response.status_code, 200)
+            self.assertEqual(connectivity_response.json()["focus_module"], "top")
 
 
 if __name__ == "__main__":

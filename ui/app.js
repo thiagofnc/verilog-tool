@@ -4060,7 +4060,21 @@ async function refreshProject() {
   }
 
   const retainedTop = state.selectedTop && state.tops.includes(state.selectedTop) ? state.selectedTop : state.tops[0];
-  await selectTop(retainedTop);
+  const retainedModule = state.selectedModule && state.modules.includes(state.selectedModule)
+    ? state.selectedModule
+    : retainedTop;
+  const retainedBreadcrumb = state.breadcrumb.length
+    ? state.breadcrumb.filter((name) => state.modules.includes(name))
+    : [];
+
+  state.selectedTop = retainedTop;
+  renderTopList();
+
+  await loadHierarchy(retainedTop);
+  await loadGraph(
+    retainedModule,
+    retainedBreadcrumb.length ? retainedBreadcrumb : [retainedModule],
+  );
 }
 
 // ── Project load progress bar ──────────────────────────────────────
@@ -4467,6 +4481,8 @@ const codeEditorState = {
   original: "",
   lintMarks: [],
   lintTimer: null,
+  statusSticky: false,
+  statusKind: "info",
 };
 
 // ── Verilog syntax linter ──────────────────────────────────────────
@@ -4687,10 +4703,12 @@ function renderLintErrors(cm, errors) {
   }
   const statusEl = document.getElementById("codeEditorStatus");
   if (statusEl) {
-    statusEl.textContent = errors.length
-      ? `Line ${errors[0].line}: ${errors[0].message || "syntax error"}`
-      : "No syntax issues";
-    statusEl.classList.toggle("has-errors", errors.length > 0);
+    updateEditorLintStatus(
+      errors.length
+        ? `Line ${errors[0].line}: ${errors[0].message || "syntax error"}`
+        : "No syntax issues",
+      errors.length > 0,
+    );
   }
 }
 
@@ -4748,11 +4766,7 @@ async function applyLint(cm) {
       marker.textContent = "●";
       try { cm.setGutterMarker(line, "cm-lint-gutter", marker); } catch (_) {}
     }
-    const statusEl = document.getElementById("codeEditorStatus");
-    if (statusEl) {
-      statusEl.textContent = `Line ${localErrors[0].line}: ${localErrors[0].message}`;
-      statusEl.classList.add("has-errors");
-    }
+    updateEditorLintStatus(`Line ${localErrors[0].line}: ${localErrors[0].message}`, true);
     return;
   }
   renderLintErrors(cm, errors);
@@ -4887,7 +4901,7 @@ function ensureCodeMirror() {
       cm.setOption("gutters", [...gutters, "cm-lint-gutter"]);
     }
     if (!codeEditorState.lintBound) {
-      cm.on("change", () => scheduleLint(cm));
+      cm.on("change", () => handleEditorChange(cm));
       codeEditorState.lintBound = true;
     }
     return cm;
@@ -4907,14 +4921,36 @@ function ensureCodeMirror() {
   // Layer the Veritas overlay on top of the base verilog mode so module
   // types and port-connection arguments get their own token classes.
   codeEditorState.cm.addOverlay(veritasVerilogOverlay);
-  codeEditorState.cm.on("change", () => scheduleLint(codeEditorState.cm));
+  codeEditorState.cm.on("change", () => handleEditorChange(codeEditorState.cm));
   codeEditorState.lintBound = true;
   return codeEditorState.cm;
 }
 
-function setEditorStatus(text) {
+function setEditorStatus(text, kind = "info", options = {}) {
+  const { sticky = false } = options;
+  codeEditorState.statusSticky = sticky;
+  codeEditorState.statusKind = kind;
+
   const el = document.getElementById("codeEditorStatus");
-  if (el) el.textContent = text || "";
+  if (!el) return;
+  el.textContent = text || "";
+  el.classList.toggle("has-errors", kind === "error");
+  el.classList.toggle("has-warning", kind === "warning");
+}
+
+function clearEditorStickyStatus() {
+  if (!codeEditorState.statusSticky) return;
+  codeEditorState.statusSticky = false;
+}
+
+function updateEditorLintStatus(text, hasErrors) {
+  if (codeEditorState.statusSticky) return;
+  setEditorStatus(text, hasErrors ? "error" : "info");
+}
+
+function handleEditorChange(cm) {
+  clearEditorStickyStatus();
+  scheduleLint(cm);
 }
 
 async function openModuleCodeEditor(moduleName, options = {}) {
@@ -4926,7 +4962,7 @@ async function openModuleCodeEditor(moduleName, options = {}) {
   overlay.classList.remove("hidden");
   titleEl.textContent = `Module Source — ${moduleName}`;
   pathEl.textContent = "Loading...";
-  setEditorStatus("Loading...");
+  setEditorStatus("Loading...", "info");
 
   const cm = ensureCodeMirror();
   if (cm) cm.setValue("");
@@ -4949,7 +4985,7 @@ async function openModuleCodeEditor(moduleName, options = {}) {
       }, 0);
     }
   } catch (error) {
-    setEditorStatus(`Failed to load: ${error.message}`);
+    setEditorStatus(`Failed to load: ${error.message}`, "error", { sticky: true });
     pathEl.textContent = "";
   }
 }
@@ -4958,7 +4994,7 @@ function jumpToInstantiation(cm, target) {
   if (!cm || !target) return false;
   const { instanceName, childModule } = target;
   if (!childModule) {
-    setEditorStatus("Missing child module name for instantiation lookup.");
+    setEditorStatus("Missing child module name for instantiation lookup.", "warning", { sticky: true });
     return false;
   }
 
@@ -5009,6 +5045,8 @@ function jumpToInstantiation(cm, target) {
   if (identIndex < 0) {
     setEditorStatus(
       `Could not locate instantiation of "${childModule}"${instanceName ? ` (${instanceName})` : ""} in this file.`,
+      "warning",
+      { sticky: true },
     );
     return false;
   }
@@ -5028,6 +5066,7 @@ function jumpToInstantiation(cm, target) {
 
   setEditorStatus(
     `Jumped to line ${fromPos.line + 1}: instantiation of ${childModule}${instanceName ? ` (${instanceName})` : ""}.`,
+    "info",
   );
   return true;
 }
@@ -5044,12 +5083,14 @@ async function saveModuleCodeEditor() {
   const cm = codeEditorState.cm;
   if (!cm || !codeEditorState.module) return;
   const content = cm.getValue();
+  const moduleToReload = state.selectedModule;
+  const breadcrumbToReload = state.breadcrumb.length ? [...state.breadcrumb] : [];
 
   const saveBtn = document.getElementById("codeEditorSave");
   const discardBtn = document.getElementById("codeEditorDiscard");
   if (saveBtn) saveBtn.disabled = true;
   if (discardBtn) discardBtn.disabled = true;
-  setEditorStatus("Saving and re-parsing project...");
+  setEditorStatus("Saving and re-parsing project...", "info");
 
   try {
     const saveResp = await apiRequest(`/api/project/modules/${encodeURIComponent(codeEditorState.module)}/source`, {
@@ -5059,29 +5100,30 @@ async function saveModuleCodeEditor() {
     codeEditorState.original = content;
     const warning = saveResp && saveResp.reparse && saveResp.reparse.warning;
     if (warning) {
-      setEditorStatus(warning);
+      const detail = saveResp && saveResp.reparse && saveResp.reparse.error;
+      setEditorStatus(detail ? `${warning} ${detail}` : warning, "warning", { sticky: true });
       setStatus("Saved with parse warning", "warn");
       return;
     }
-    setEditorStatus("Saved. Refreshing viewer...");
+    setEditorStatus("Saved. Refreshing viewer...", "info");
 
     // Re-parse already happened on the server. Refresh the project listing
     // and reload the currently focused module's graph so the viewer updates.
     try {
       await refreshProject();
-      if (state.selectedModule) {
+      if (moduleToReload && state.modules.includes(moduleToReload)) {
         await loadGraph(
-          state.selectedModule,
-          state.breadcrumb.length ? [...state.breadcrumb] : [state.selectedModule],
+          moduleToReload,
+          breadcrumbToReload.length ? breadcrumbToReload : [moduleToReload],
         );
       }
       setStatus("Module updated", "ok");
-      setEditorStatus("Saved.");
+      setEditorStatus("Saved.", "info");
     } catch (refreshErr) {
-      setEditorStatus(`Saved, but refresh failed: ${refreshErr.message}`);
+      setEditorStatus(`Saved, but refresh failed: ${refreshErr.message}`, "warning", { sticky: true });
     }
   } catch (error) {
-    setEditorStatus(`Save failed: ${error.message}`);
+    setEditorStatus(`Save failed: ${error.message}`, "error", { sticky: true });
   } finally {
     if (saveBtn) saveBtn.disabled = false;
     if (discardBtn) discardBtn.disabled = false;
@@ -5092,7 +5134,7 @@ function discardModuleCodeEditor() {
   const cm = codeEditorState.cm;
   if (!cm) return;
   cm.setValue(codeEditorState.original || "");
-  setEditorStatus("Changes discarded.");
+  setEditorStatus("Changes discarded.", "info");
 }
 
 document.getElementById("codeEditorClose")?.addEventListener("click", closeModuleCodeEditor);

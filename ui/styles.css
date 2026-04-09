@@ -215,6 +215,11 @@ body {
   border-color: rgba(245, 158, 11, 0.25);
 }
 
+.status.warn {
+  color: var(--warn);
+  border-color: rgba(245, 158, 11, 0.25);
+}
+
 .status.error {
   color: var(--danger);
   border-color: rgba(239, 68, 68, 0.25);
@@ -1381,8 +1386,11 @@ body {
 }
 .code-editor-status {
   flex: 1;
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1.45;
   color: #94a3b8;
+  white-space: normal;
+  word-break: break-word;
 }
 .code-editor-footer button {
   padding: 6px 14px;
@@ -1452,6 +1460,10 @@ body {
 }
 #codeEditorStatus.has-errors {
   color: #ef4444;
+  font-weight: 600;
+}
+#codeEditorStatus.has-warning {
+  color: #f59e0b;
   font-weight: 600;
 }
 
