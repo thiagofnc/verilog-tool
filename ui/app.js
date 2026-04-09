@@ -1,4 +1,4 @@
-﻿const PROJECT_OPTIONS = [
+const PROJECT_OPTIONS = [
   {
     label: "Processor",
     folder: "C:\\Users\\costatf\\OneDrive - Rose-Hulman Institute of Technology\\Desktop\\pipelined-processor-l2-2526a-05",
@@ -4491,14 +4491,27 @@ const VERITAS_VERILOG_KEYWORDS = new Set([
 ]);
 
 const veritasVerilogOverlay = {
-  startState: () => ({ argDepth: 0 }),
-  copyState: (s) => ({ argDepth: s.argDepth }),
+  startState: () => ({
+    argDepth: 0,
+    moduleTypeStart: null,
+    moduleTypeEnd: null,
+  }),
+  copyState: (s) => ({
+    argDepth: s.argDepth,
+    moduleTypeStart: s.moduleTypeStart,
+    moduleTypeEnd: s.moduleTypeEnd,
+  }),
   token(stream, state) {
     // ── Inside a port-connection's argument list ──
     if (state.argDepth > 0) {
       const ch = stream.peek();
       if (ch === "(") { stream.next(); state.argDepth++; return null; }
       if (ch === ")") { stream.next(); state.argDepth--; return null; }
+      if (ch === "\\") {
+        stream.next();
+        stream.eatWhile(/[^\s,;(){}\[\]]/);
+        return "vt-arg";
+      }
       // Identifier → mark as a connection argument.
       if (/[A-Za-z_]/.test(ch)) {
         stream.eatWhile(/[\w$]/);
@@ -4518,19 +4531,19 @@ const veritasVerilogOverlay = {
         /^(\s*)([A-Za-z_]\w*)\s*(?:#\s*\([^)]*\))?\s+([A-Za-z_]\w*)\s*\(/,
       );
       if (m && !VERITAS_VERILOG_KEYWORDS.has(m[2])) {
-        state._moduleTypeStart = stream.pos + m[1].length;
-        state._moduleTypeEnd = state._moduleTypeStart + m[2].length;
+        state.moduleTypeStart = stream.pos + m[1].length;
+        state.moduleTypeEnd = state.moduleTypeStart + m[2].length;
       }
     }
 
     // ── Emit the module type token when we reach its column ──
     if (
-      state._moduleTypeStart !== undefined &&
-      stream.pos === state._moduleTypeStart
+      state.moduleTypeStart !== null &&
+      stream.pos === state.moduleTypeStart
     ) {
-      while (stream.pos < state._moduleTypeEnd) stream.next();
-      delete state._moduleTypeStart;
-      delete state._moduleTypeEnd;
+      while (stream.pos < state.moduleTypeEnd) stream.next();
+      state.moduleTypeStart = null;
+      state.moduleTypeEnd = null;
       return "vt-module";
     }
 
