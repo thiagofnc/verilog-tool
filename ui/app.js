@@ -4665,57 +4665,86 @@ function clearLintMarks(cm) {
   try { cm.clearGutter("cm-lint-gutter"); } catch (_) {}
 }
 
+function normalizeLintError(cm, err) {
+  if (!cm || !err) return null;
+  const totalLines = Math.max(1, cm.lineCount());
+  const lineIdx = Math.max(0, Math.min(totalLines - 1, (err.line || 1) - 1));
+  const lineText = cm.getLine(lineIdx) || "";
+  let from = err.from || err._from || { line: lineIdx, ch: 0 };
+  let to = err.to || err._to || { line: lineIdx, ch: lineText.length };
+
+  if (!err.from && !err._from && err.token) {
+    const idx = lineText.indexOf(err.token);
+    if (idx >= 0) {
+      from = { line: lineIdx, ch: idx };
+      to = { line: lineIdx, ch: idx + err.token.length };
+    }
+  }
+
+  if (from.line !== to.line && to.ch === 0 && to.line > from.line) {
+    to = { line: from.line, ch: (cm.getLine(from.line) || "").length };
+  }
+  if (from.line === to.line && from.ch === to.ch) {
+    to = { line: from.line, ch: Math.min(from.ch + 1, (cm.getLine(from.line) || "").length || from.ch + 1) };
+  }
+
+  return {
+    line: lineIdx + 1,
+    from,
+    to,
+    message: err.message || err.msg || "Syntax error",
+  };
+}
+
 function renderLintErrors(cm, errors) {
   clearLintMarks(cm);
   const byLine = new Map();
+  const seen = new Set();
+  const normalizedErrors = [];
   for (const err of errors) {
-    // Server errors are 1-indexed; CodeMirror is 0-indexed.
-    const lineIdx = Math.max(0, (err.line || 1) - 1);
-    const lineText = cm.getLine(lineIdx) || "";
-    let from = { line: lineIdx, ch: 0 };
-    let to = { line: lineIdx, ch: lineText.length };
-    if (err.token) {
-      const idx = lineText.indexOf(err.token);
-      if (idx >= 0) {
-        from = { line: lineIdx, ch: idx };
-        to = { line: lineIdx, ch: idx + err.token.length };
-      }
-    }
-    const mark = cm.markText(from, to, {
+    const normalized = normalizeLintError(cm, err);
+    if (!normalized) continue;
+    const key = `${normalized.from.line}:${normalized.from.ch}:${normalized.to.line}:${normalized.to.ch}:${normalized.message}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalizedErrors.push(normalized);
+  }
+  for (const err of normalizedErrors) {
+    const lineIdx = err.from.line;
+    const mark = cm.markText(err.from, err.to, {
       className: "cm-lint-error",
-      title: err.message || "Syntax error",
+      title: err.message,
     });
     codeEditorState.lintMarks.push(mark);
-    // Also tint the entire line so the error is impossible to miss.
     const lineHandle = cm.addLineClass(lineIdx, "background", "cm-lint-error-line");
     codeEditorState.lintMarks.push({
       clear: () => cm.removeLineClass(lineHandle, "background", "cm-lint-error-line"),
     });
     if (!byLine.has(lineIdx)) byLine.set(lineIdx, []);
-    byLine.get(lineIdx).push(err.message || "Syntax error");
+    byLine.get(lineIdx).push(err.message);
   }
   for (const [line, msgs] of byLine.entries()) {
     const marker = document.createElement("div");
     marker.className = "cm-lint-gutter-marker";
     marker.title = msgs.join("\n");
-    marker.textContent = "●";
+    marker.textContent = "!";
     try { cm.setGutterMarker(line, "cm-lint-gutter", marker); } catch (_) {}
   }
   const statusEl = document.getElementById("codeEditorStatus");
   if (statusEl) {
     updateEditorLintStatus(
-      errors.length
-        ? `Line ${errors[0].line}: ${errors[0].message || "syntax error"}`
+      normalizedErrors.length
+        ? normalizedErrors.length === 1
+          ? `Line ${normalizedErrors[0].line}: ${normalizedErrors[0].message}`
+          : `${normalizedErrors.length} syntax issues. First: line ${normalizedErrors[0].line}: ${normalizedErrors[0].message}`
         : "No syntax issues",
-      errors.length > 0,
+      normalizedErrors.length > 0,
     );
   }
 }
 
 async function applyLint(cm) {
   if (!cm) return;
-  // First do a fast local pass for delimiter / block-keyword balance so the
-  // user gets immediate feedback while typing.
   const localErrors = verilogLint(cm.getValue()).map((e) => ({
     line: e.from.line + 1,
     token: null,
@@ -4724,7 +4753,6 @@ async function applyLint(cm) {
     _from: e.from,
     _to: e.to,
   }));
-  // Then ask the server's real parser for authoritative errors.
   let serverErrors = [];
   try {
     const resp = await apiRequest("/api/lint/verilog", {
@@ -4733,43 +4761,8 @@ async function applyLint(cm) {
     });
     if (resp && Array.isArray(resp.errors)) serverErrors = resp.errors;
   } catch (_) {
-    // Server unreachable — fall back to local-only.
   }
-  // Server errors take priority; show local errors only if server found none.
-  const errors = serverErrors.length ? serverErrors : localErrors.map((e) => ({
-    line: e.line,
-    token: null,
-    message: e.message,
-  }));
-  // Render local-error spans precisely when we're using the local fallback,
-  // since they have exact column ranges.
-  if (!serverErrors.length && localErrors.length) {
-    clearLintMarks(cm);
-    const byLine = new Map();
-    for (const e of localErrors) {
-      const mark = cm.markText(e._from, e._to, {
-        className: "cm-lint-error",
-        title: e.message,
-      });
-      codeEditorState.lintMarks.push(mark);
-      const lh = cm.addLineClass(e._from.line, "background", "cm-lint-error-line");
-      codeEditorState.lintMarks.push({
-        clear: () => cm.removeLineClass(lh, "background", "cm-lint-error-line"),
-      });
-      if (!byLine.has(e._from.line)) byLine.set(e._from.line, []);
-      byLine.get(e._from.line).push(e.message);
-    }
-    for (const [line, msgs] of byLine.entries()) {
-      const marker = document.createElement("div");
-      marker.className = "cm-lint-gutter-marker";
-      marker.title = msgs.join("\n");
-      marker.textContent = "●";
-      try { cm.setGutterMarker(line, "cm-lint-gutter", marker); } catch (_) {}
-    }
-    updateEditorLintStatus(`Line ${localErrors[0].line}: ${localErrors[0].message}`, true);
-    return;
-  }
-  renderLintErrors(cm, errors);
+  renderLintErrors(cm, [...serverErrors, ...localErrors]);
 }
 
 function scheduleLint(cm) {
@@ -4914,10 +4907,17 @@ function ensureCodeMirror() {
     lineNumbers: true,
     indentUnit: 2,
     tabSize: 2,
+    inputStyle: "textarea",
     lineWrapping: false,
     matchBrackets: true,
     gutters: ["CodeMirror-linenumbers", "cm-lint-gutter"],
   });
+  const inputField = codeEditorState.cm.getInputField?.();
+  if (inputField) {
+    inputField.setAttribute("spellcheck", "false");
+    inputField.setAttribute("autocorrect", "off");
+    inputField.setAttribute("autocapitalize", "off");
+  }
   // Layer the Veritas overlay on top of the base verilog mode so module
   // types and port-connection arguments get their own token classes.
   codeEditorState.cm.addOverlay(veritasVerilogOverlay);

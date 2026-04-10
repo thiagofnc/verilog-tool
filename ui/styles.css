@@ -1374,6 +1374,13 @@ body {
   font-family: "IBM Plex Mono", monospace;
   font-size: 13px;
 }
+.code-editor-body .CodeMirror pre,
+.code-editor-body .CodeMirror-line,
+.code-editor-body .CodeMirror-line-like {
+  letter-spacing: 0;
+  word-spacing: normal;
+  text-transform: none;
+}
 #codeEditorTextarea { display: none; }
 
 .code-editor-footer {
