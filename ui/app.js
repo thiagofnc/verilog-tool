@@ -1041,6 +1041,45 @@ function ensureCytoscape() {
           opacity: 0.08,
         },
       },
+      // ── Cross-module trace highlight (schematic overlay) ───
+      {
+        selector: "node.xtrace-hit",
+        style: {
+          "border-color": "#f59e0b",
+          "border-width": 2.5,
+          "z-index": 150,
+        },
+      },
+      {
+        selector: "node.xtrace-active",
+        style: {
+          "border-color": "#22d3ee",
+          "border-width": 3,
+          "z-index": 160,
+        },
+      },
+      {
+        selector: "edge.xtrace-hit",
+        style: {
+          "line-color": "#f59e0b",
+          "target-arrow-color": "#f59e0b",
+          width: 2.5,
+          "line-opacity": 1,
+          "z-index": 150,
+        },
+      },
+      {
+        selector: "node.xtrace-dimmed",
+        style: {
+          opacity: 0.15,
+        },
+      },
+      {
+        selector: "edge.xtrace-dimmed",
+        style: {
+          opacity: 0.06,
+        },
+      },
       // ── Search match highlight ──────────────────────────────
       {
         selector: "node.search-match",
@@ -1260,7 +1299,8 @@ function ensureCytoscape() {
     };
   }
 
-  function applySignalTrace(startPortId) {
+  function applySignalTrace(startPortId, keepHistory) {
+    if (!keepHistory) signalTraceHistory.length = 0;
     clearSignalTrace();
     clearRelationHighlights();
     state.cy.elements(".netlabel-highlighted, .netlabel-endpoint").removeClass("netlabel-highlighted netlabel-endpoint");
@@ -1440,27 +1480,7 @@ function ensureCytoscape() {
       showAlwaysDetail(data);
     }
 
-    // Double-click on a port or module_io: trigger signal trace
-    if (isDoubleTap && ["instance_port", "process_port", "module_io"].includes(data.kind)) {
-      applySignalTrace(data.id);
-    }
   });
-
-  // Double-click on a netlabel: trace from its connected port
-  state.cy.on("tap", 'node[kind = "netlabel_node"]', (() => {
-    let lastNlId = null;
-    let lastNlTs = 0;
-    return (event) => {
-      const data = event.target.data();
-      const now = Date.now();
-      const isDouble = lastNlId === data.id && now - lastNlTs < 360;
-      lastNlId = data.id;
-      lastNlTs = now;
-      if (isDouble && data.connected_port) {
-        applySignalTrace(data.connected_port);
-      }
-    };
-  })());
 
   state.cy.on("tap", "edge", (event) => {
     state.selectedEdge = event.target.data();
@@ -3306,6 +3326,10 @@ function getTraceableSelection() {
       const sig = node.port_name || node.label;
       if (sig) return { module: mod, signal: sig, label: `${mod}.${sig}` };
     }
+    if (node.kind === "netlabel_node") {
+      const sig = node.net_label_text || node.label;
+      if (sig) return { module: mod, signal: sig, label: `${mod}.${sig}` };
+    }
     if (node.kind === "assign" && node.target_signal) {
       return { module: mod, signal: node.target_signal, label: `${mod}.${node.target_signal}` };
     }
@@ -3324,7 +3348,196 @@ function getTraceableSelection() {
   return null;
 }
 
-async function requestCrossModuleTrace(moduleName, signal) {
+function clearCrossTraceHighlights() {
+  if (state.cy) {
+    state.cy.elements(".xtrace-hit, .xtrace-active, .xtrace-dimmed")
+      .removeClass("xtrace-hit xtrace-active xtrace-dimmed");
+  }
+  document.querySelectorAll(".tree-module-btn.xtrace-highlight").forEach((el) => {
+    el.classList.remove("xtrace-highlight");
+  });
+}
+
+function applyCrossTraceHighlights(trace) {
+  if (!state.cy || !state.graph) return;
+  clearCrossTraceHighlights();
+
+  const currentModule = state.selectedModule || "";
+  const allHops = [...(trace.fanin || []), ...(trace.fanout || [])];
+  const origin = trace.origin || {};
+
+  // 1. Collect all module names touched by the trace (for tree + instance highlighting).
+  const traceModules = new Set();
+  if (origin.module) traceModules.add(origin.module);
+  for (const hop of allHops) {
+    if (hop.module) traceModules.add(hop.module);
+    if (hop.next_module) traceModules.add(hop.next_module);
+  }
+
+  // 2. Collect signal names that belong to the CURRENT module's scope.
+  //    These are the ones we can actually highlight on the schematic.
+  const localSignals = new Set();
+  if (origin.module === currentModule && origin.signal) localSignals.add(origin.signal);
+  for (const hop of allHops) {
+    if (hop.module === currentModule && hop.signal) localSignals.add(hop.signal);
+    // When a signal crosses into/out of this module, the next_signal is also local
+    if (hop.next_module === currentModule && hop.next_signal) localSignals.add(hop.next_signal);
+  }
+
+  // If no signals belong to the current module, still highlight instances.
+  // 3. Build a set of net names from the graph edges that match local signals.
+  //    Graph edges carry the parent-scope net names that connect ports.
+  const hitNetNames = new Set();
+  for (const edge of (state.graph.edges || [])) {
+    const netName = summarizeEdgeNetName(edge);
+    if (netName && localSignals.has(netName)) {
+      hitNetNames.add(netName);
+    }
+  }
+  // Also add the local signal names directly — module_io port_name matches these.
+  for (const sig of localSignals) hitNetNames.add(sig);
+
+  // 4. Dim everything, then highlight matches.
+  state.cy.elements().addClass("xtrace-dimmed");
+
+  const undim = (ele, cls) => {
+    ele.removeClass("xtrace-dimmed").addClass(cls || "xtrace-hit");
+  };
+
+  // Pass 1: Highlight nodes.
+  state.cy.nodes().forEach((node) => {
+    const data = node.data();
+
+    // Instance blocks whose module type is in the trace
+    if (data.kind === "instance" && data.module_name && traceModules.has(data.module_name)) {
+      undim(node);
+      return;
+    }
+
+    // Module IO ports whose port_name matches a local signal
+    if (data.kind === "module_io") {
+      const pn = data.port_name || "";
+      if (pn && hitNetNames.has(pn)) {
+        undim(node);
+        return;
+      }
+    }
+
+    // Instance ports — check if the net connecting them is a traced signal.
+    // We do this by checking connected edges' net names.
+    if (data.kind === "instance_port" || data.kind === "process_port") {
+      const connEdges = node.connectedEdges();
+      let matched = false;
+      connEdges.forEach((e) => {
+        const en = e.data("net") || e.data("signal_name") || (e.data("nets") && e.data("nets")[0]) || "";
+        if (en && hitNetNames.has(en)) matched = true;
+      });
+      if (matched) {
+        undim(node);
+        // Also un-dim parent instance
+        const pid = data.instance_node_id || data.parent_node_id || data.process_node_id;
+        if (pid) {
+          const parent = state.cy.getElementById(pid);
+          if (parent && !parent.empty()) undim(parent);
+        }
+        return;
+      }
+    }
+
+    // Net nodes (if they exist) whose label matches
+    if (data.kind === "net") {
+      const lbl = data.label || "";
+      if (lbl && hitNetNames.has(lbl)) {
+        undim(node);
+        return;
+      }
+    }
+
+    // Netlabel nodes
+    if (data.kind === "netlabel_node") {
+      const nlText = data.net_label_text || "";
+      if (nlText && hitNetNames.has(nlText)) {
+        undim(node);
+      }
+    }
+  });
+
+  // Pass 2: Highlight edges whose net name matches, or whose endpoints are both highlighted.
+  state.cy.edges().forEach((edge) => {
+    const data = edge.data();
+    const netName = data.net || data.signal_name || (data.nets && data.nets[0]) || "";
+
+    if (netName && hitNetNames.has(netName)) {
+      undim(edge);
+      // Un-dim route anchors
+      [data.source, data.target].forEach((id) => {
+        const n = state.cy.getElementById(id);
+        if (n && !n.empty() && n.data("kind") === "route_anchor") undim(n);
+      });
+      return;
+    }
+
+    // Netlabel stubs
+    if (data.netlabel_stub) {
+      const src = state.cy.getElementById(data.source);
+      const tgt = state.cy.getElementById(data.target);
+      if ((src && src.hasClass("xtrace-hit")) || (tgt && tgt.hasClass("xtrace-hit"))) {
+        undim(edge);
+      }
+      return;
+    }
+
+    // Route segments
+    if (data.route_segment) {
+      const routeId = data.route_id;
+      // Check if any non-anchor endpoint in this route is highlighted
+      if (routeId) {
+        const routeEdges = state.cy.edges(`[route_id = "${routeId}"]`);
+        let anyHit = false;
+        routeEdges.forEach((re) => {
+          const s = state.cy.getElementById(re.data("source"));
+          const t = state.cy.getElementById(re.data("target"));
+          if ((s && s.hasClass("xtrace-hit") && s.data("kind") !== "route_anchor") ||
+              (t && t.hasClass("xtrace-hit") && t.data("kind") !== "route_anchor")) {
+            anyHit = true;
+          }
+        });
+        if (anyHit) {
+          // Highlight the entire route
+          routeEdges.forEach((re) => {
+            undim(re);
+            [re.data("source"), re.data("target")].forEach((id) => {
+              const n = state.cy.getElementById(id);
+              if (n && !n.empty() && n.data("kind") === "route_anchor") undim(n);
+            });
+          });
+        }
+      }
+      return;
+    }
+
+    // Generic: both endpoints highlighted
+    const src = state.cy.getElementById(data.source);
+    const tgt = state.cy.getElementById(data.target);
+    if (src && tgt && src.hasClass("xtrace-hit") && tgt.hasClass("xtrace-hit")) {
+      undim(edge);
+    }
+  });
+
+  // 5. Highlight modules in the hierarchy tree.
+  document.querySelectorAll(".tree-module-btn").forEach((btn) => {
+    const modName = btn.textContent.trim().replace(/\s*\[.*\]$/, "");
+    if (traceModules.has(modName)) {
+      btn.classList.add("xtrace-highlight");
+    }
+  });
+}
+
+// Cross-module trace navigation history for forward stepping.
+const crossTraceHistory = [];
+
+async function requestCrossModuleTrace(moduleName, signal, keepHistory) {
+  if (!keepHistory) crossTraceHistory.length = 0;
   try {
     setStatus(`Tracing ${moduleName}.${signal}...`, "loading");
     const response = await fetch(`${API_BASE}/api/signal/trace`, {
@@ -3337,6 +3550,7 @@ async function requestCrossModuleTrace(moduleName, signal) {
       throw new Error(err.detail || `HTTP ${response.status}`);
     }
     const trace = await response.json();
+    applyCrossTraceHighlights(trace);
     renderCrossModuleTracePanel(trace);
     setStatus(
       `Trace: ${trace.fanin.length} upstream, ${trace.fanout.length} downstream${trace.truncated ? " (truncated)" : ""}`,
@@ -3480,169 +3694,241 @@ function renderCrossModuleTracePanel(trace) {
     panel.id = "crossTracePanel";
     panel.style.cssText = `
       position: absolute; top: 8px; right: 8px; z-index: 210;
-      background: #18181b; border: 1px solid rgba(255,255,255,0.10); border-radius: 4px;
-      padding: 10px 12px; min-width: 340px; max-width: 520px;
+      background: #18181b; border: 1px solid rgba(255,255,255,0.10); border-radius: 6px;
+      padding: 14px 16px; min-width: 320px; max-width: 480px;
       max-height: 78vh; overflow-y: auto; color: #e4e4e7;
-      font-family: 'IBM Plex Mono', Consolas, Monaco, monospace; font-size: 11px;
+      font-family: 'IBM Plex Mono', Consolas, Monaco, monospace; font-size: 12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.5);
     `;
     const canvas = document.getElementById("graphCanvas");
     if (canvas) canvas.appendChild(panel);
   }
 
-  // Persist the expand/collapse mode between re-renders.
-  const modeKey = "__traceViewMode";
-  const mode = panel[modeKey] || "summary"; // "summary" | "details"
-  panel[modeKey] = mode;
+  // Persist expand/collapse for long lists.
+  const expandKey = "__expandedSections";
+  if (!panel[expandKey]) panel[expandKey] = { fanin: false, fanout: false };
 
   const groupedFanin = groupTraceHops(trace.fanin || []);
   const groupedFanout = groupTraceHops(trace.fanout || []);
 
-  // Summary view: critical path only (compute + pipeline + boundary crossings).
-  const summaryFanin = groupedFanin.filter(traceHopIsMeaningful);
-  const summaryFanout = groupedFanout.filter(traceHopIsMeaningful);
+  const INITIAL_CAP = 8;
 
-  // Fan-out collapse: cap at this many entries in summary view.
-  const FANOUT_SUMMARY_CAP = 5;
-  const fanoutShown = mode === "summary"
-    ? summaryFanout.slice(0, FANOUT_SUMMARY_CAP)
-    : groupedFanout;
-  const fanoutHiddenCount = mode === "summary"
-    ? Math.max(0, summaryFanout.length - FANOUT_SUMMARY_CAP)
-    : 0;
+  const faninShown = panel[expandKey].fanin ? groupedFanin : groupedFanin.slice(0, INITIAL_CAP);
+  const faninHidden = panel[expandKey].fanin ? 0 : Math.max(0, groupedFanin.length - INITIAL_CAP);
+  const fanoutShown = panel[expandKey].fanout ? groupedFanout : groupedFanout.slice(0, INITIAL_CAP);
+  const fanoutHidden = panel[expandKey].fanout ? 0 : Math.max(0, groupedFanout.length - INITIAL_CAP);
 
-  const faninList = mode === "summary" ? summaryFanin : groupedFanin;
-
-  const renderGroup = (group, accentColor) => {
+  const renderHop = (group, accentColor, index, direction) => {
     const roleStyle = traceRoleStyle(group.role);
     const headline = formatHopHeadline(group);
     const badges = renderTraceBadges(group);
-    const scopeAttr = `data-trace-module="${escapeHtml(group.module)}" data-trace-signal="${escapeHtml(group.signal)}"`;
-    const nextAttr = group.next_module && group.next_signal
-      ? `data-trace-module="${escapeHtml(group.next_module)}" data-trace-signal="${escapeHtml(group.next_signal)}"`
-      : "";
+    const crossIcon = group.crosses === "down" ? " \u2193" : group.crosses === "up" ? " \u2191" : "";
 
-    // Scope line: "Module.signal"
-    const scopeLine = `
-      <div style="font-size:9px;color:#71717a;letter-spacing:0.02em;">
-        <a href="#" class="xtrace-nav" data-trace-module="${escapeHtml(group.module)}" style="color:#22d3ee;text-decoration:none;">${escapeHtml(group.module)}</a><span style="color:#3f3f46;">.</span><a href="#" class="xtrace-retrace" ${scopeAttr} style="color:#a1a1aa;text-decoration:none;">${escapeHtml(group.signal)}</a>
-      </div>`;
-
-    // Role pill
-    const rolePill = `<span style="display:inline-block;background:${roleStyle.color}22;color:${roleStyle.color};padding:1px 6px;border-radius:2px;font-size:8px;font-weight:700;letter-spacing:0.08em;margin-right:6px;">${roleStyle.label}</span>`;
-
-    // Optional "follow" link for boundary crossings.
-    const followLink = nextAttr
-      ? ` <a href="#" class="xtrace-retrace" ${nextAttr} style="color:#a78bfa;text-decoration:none;font-size:9px;">[follow]</a>`
-      : "";
+    // "step into" button — re-traces from this hop's signal, pushing history
+    const stepBtn = `<a href="#" class="xtrace-step" data-trace-module="${escapeHtml(group.module)}" data-trace-signal="${escapeHtml(group.signal)}" style="color:#f59e0b;text-decoration:none;font-size:9px;margin-left:auto;flex-shrink:0;border:1px solid #f59e0b44;padding:0 5px;border-radius:2px;white-space:nowrap;">step \u2192</a>`;
 
     return `
-      <div style="margin:4px 0;padding:5px 8px;border-left:2px solid ${accentColor};background:rgba(255,255,255,0.02);border-radius:0 2px 2px 0;">
-        ${scopeLine}
-        <div style="margin-top:3px;line-height:1.5;">
-          ${rolePill}<span style="color:#e4e4e7;">${escapeHtml(headline)}</span>${badges}${followLink}
+      <div class="xtrace-hop" data-hop-dir="${direction}" data-hop-idx="${index}" style="margin:3px 0;padding:5px 8px;border-left:2.5px solid ${accentColor};background:rgba(255,255,255,0.025);border-radius:0 4px 4px 0;transition:background 0.1s;">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <span style="display:inline-block;background:${roleStyle.color}22;color:${roleStyle.color};padding:1px 6px;border-radius:3px;font-size:9px;font-weight:700;letter-spacing:0.06em;flex-shrink:0;">${roleStyle.label}</span>
+          <span style="color:#e4e4e7;font-size:12px;">${escapeHtml(headline)}</span>
+          ${badges}
+          ${stepBtn}
+        </div>
+        <div style="display:flex;align-items:center;gap:4px;margin-top:3px;font-size:10px;">
+          <a href="#" class="xtrace-nav" data-trace-module="${escapeHtml(group.module)}" style="color:#22d3ee;text-decoration:none;font-weight:500;">${escapeHtml(group.module)}</a><span style="color:#3f3f46;">.</span><a href="#" class="xtrace-retrace" data-trace-module="${escapeHtml(group.module)}" data-trace-signal="${escapeHtml(group.signal)}" style="color:#a1a1aa;text-decoration:none;">${escapeHtml(group.signal)}</a>${crossIcon ? `<span style="color:#a78bfa;font-weight:600;">${crossIcon}</span>` : ""}${group.next_module && group.next_signal
+            ? ` <a href="#" class="xtrace-step" data-trace-module="${escapeHtml(group.next_module)}" data-trace-signal="${escapeHtml(group.next_signal)}" style="color:#a78bfa;text-decoration:none;font-size:9px;border:1px solid #a78bfa33;padding:0 4px;border-radius:2px;">follow \u2192</a>`
+            : ""}
         </div>
       </div>`;
   };
 
-  const renderSection = (groups, accent, heading, emptyMsg, extraFooter = "") => {
-    let html = `<div style="color:${accent};font-weight:600;margin:8px 0 4px;font-size:10px;letter-spacing:0.06em;text-transform:uppercase;">${heading}</div>`;
+  const renderSection = (groups, accent, heading, emptyMsg, hiddenCount, expandId, direction) => {
+    const totalCount = groups.length + hiddenCount;
+    let html = `<div style="color:${accent};font-weight:700;margin:10px 0 6px;font-size:11px;letter-spacing:0.04em;">${heading} <span style="font-weight:400;color:#71717a;font-size:10px;">(${totalCount})</span></div>`;
     if (!groups.length) {
-      html += `<div style="color:#52525b;margin:2px 0 4px 2px;font-size:10px;">${emptyMsg}</div>`;
+      html += `<div style="color:#52525b;margin:2px 0 4px 2px;font-size:11px;">${emptyMsg}</div>`;
       return html;
     }
-    html += groups.map((g) => renderGroup(g, accent)).join("");
-    if (extraFooter) html += extraFooter;
+    html += groups.map((g, i) => renderHop(g, accent, i, direction)).join("");
+    if (hiddenCount > 0) {
+      html += `<div style="margin:6px 0 0 4px;"><a href="#" id="${expandId}" style="color:${accent};text-decoration:none;font-size:10px;font-weight:500;">Show ${hiddenCount} more \u25bc</a></div>`;
+    }
     return html;
   };
 
   const origin = trace.origin || {};
-  const modeToggle = `
-    <button id="traceModeToggle" style="background:none;border:1px solid #3f3f46;color:#a1a1aa;padding:2px 8px;border-radius:2px;cursor:pointer;font-size:9px;letter-spacing:0.06em;text-transform:uppercase;">
-      ${mode === "summary" ? "Show details" : "Show summary"}
-    </button>`;
+  const totalDrivers = groupedFanin.length;
+  const totalLoads = groupedFanout.length;
 
-  const totals = `
-    <div style="color:#71717a;font-size:9px;margin-top:2px;">
-      ${mode === "summary"
-        ? `${summaryFanin.length} key driver${summaryFanin.length === 1 ? "" : "s"} / ${summaryFanout.length} key load${summaryFanout.length === 1 ? "" : "s"} (filtered from ${groupedFanin.length + groupedFanout.length})`
-        : `${groupedFanin.length + groupedFanout.length} grouped steps (${(trace.fanin || []).length + (trace.fanout || []).length} raw)`}
-    </div>`;
+  // Build breadcrumb from crossTraceHistory
+  let breadcrumbHtml = "";
+  if (crossTraceHistory.length > 0) {
+    const crumbs = crossTraceHistory.map((h, i) =>
+      `<a href="#" class="xtrace-history-jump" data-history-index="${i}" style="color:#f59e0b;text-decoration:none;white-space:nowrap;">${escapeHtml(h.module)}.${escapeHtml(h.signal)}</a>`
+    );
+    breadcrumbHtml = `
+      <div style="display:flex;align-items:center;gap:4px;margin-bottom:8px;padding:5px 8px;background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.15);border-radius:4px;overflow-x:auto;font-size:10px;flex-wrap:wrap;">
+        <span style="color:#71717a;flex-shrink:0;">Path:</span>
+        ${crumbs.join('<span style="color:#3f3f46;flex-shrink:0;"> \u2192 </span>')}
+        <span style="color:#3f3f46;flex-shrink:0;"> \u2192 </span>
+        <span style="color:#e4e4e7;font-weight:600;white-space:nowrap;">${escapeHtml(origin.module || "")}.${escapeHtml(origin.signal || "")}</span>
+      </div>`;
+  }
 
-  const fanoutFooter = fanoutHiddenCount > 0
-    ? `<div style="margin:4px 0 0 2px;font-size:10px;color:#71717a;">+ ${fanoutHiddenCount} more load${fanoutHiddenCount === 1 ? "" : "s"} <a href="#" id="traceExpandFanout" style="color:#22d3ee;text-decoration:none;">expand</a></div>`
+  const backButton = crossTraceHistory.length > 0
+    ? `<button id="xtraceBackBtn" style="background:none;border:1px solid #3f3f46;color:#a1a1aa;cursor:pointer;font-size:10px;padding:2px 8px;border-radius:3px;display:flex;align-items:center;gap:3px;"><span>\u2190</span> Back</button>`
     : "";
 
   panel.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;">
-      <span style="font-weight:600;font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:#a1a1aa;">Signal Trace</span>
-      <div style="display:flex;gap:6px;align-items:center;">
-        ${modeToggle}
-        <button id="closeCrossTracePanel" style="background:none;border:none;color:#52525b;cursor:pointer;font-size:16px;line-height:1;">&times;</button>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        ${backButton}
+        <span style="font-weight:700;font-size:12px;letter-spacing:0.06em;text-transform:uppercase;color:#a1a1aa;">Cross-Module Trace</span>
       </div>
+      <button id="closeCrossTracePanel" style="background:none;border:none;color:#71717a;cursor:pointer;font-size:16px;line-height:1;padding:2px 4px;">&times;</button>
     </div>
-    <div style="padding:5px 8px;border:1px solid rgba(34,211,238,0.3);border-radius:3px;margin-bottom:6px;background:rgba(34,211,238,0.06);">
-      <div style="color:#22d3ee;font-size:9px;font-weight:600;letter-spacing:0.08em;">ORIGIN</div>
-      <div style="margin-top:2px;"><strong style="color:#e4e4e7;">${escapeHtml(origin.module || "")}</strong><span style="color:#71717a;">.</span>${escapeHtml(origin.signal || "")}</div>
-      ${totals}
+
+    ${breadcrumbHtml}
+
+    <div style="padding:8px 10px;border:1.5px solid rgba(34,211,238,0.35);border-radius:5px;margin-bottom:8px;background:rgba(34,211,238,0.07);">
+      <div style="color:#22d3ee;font-size:9px;font-weight:700;letter-spacing:0.1em;margin-bottom:3px;">TRACING</div>
+      <div style="font-size:13px;font-weight:600;"><strong style="color:#e4e4e7;">${escapeHtml(origin.module || "")}</strong><span style="color:#71717a;">.</span>${escapeHtml(origin.signal || "")}</div>
+      <div style="color:#71717a;font-size:10px;margin-top:3px;">${totalDrivers} driver${totalDrivers === 1 ? "" : "s"} \u2022 ${totalLoads} load${totalLoads === 1 ? "" : "s"}${trace.truncated ? " \u2022 truncated" : ""}</div>
     </div>
+
     ${renderSection(
-      faninList,
+      faninShown,
       "#4ade80",
-      "\u25b2 Fan-in (what drives it)",
-      mode === "summary" ? "(no meaningful drivers — try details view)" : "(no drivers found)"
+      "\u25b2 Comes from",
+      "No drivers found",
+      faninHidden,
+      "traceExpandFanin",
+      "fanin"
     )}
     ${renderSection(
       fanoutShown,
       "#60a5fa",
-      "\u25bc Fan-out (what it drives)",
-      mode === "summary" ? "(no meaningful loads — try details view)" : "(no loads found)",
-      fanoutFooter
+      "\u25bc Drives",
+      "No loads found",
+      fanoutHidden,
+      "traceExpandFanout",
+      "fanout"
     )}
-    ${trace.truncated ? `<div style="color:#f59e0b;margin-top:6px;font-size:9px;">Result truncated at max_hops.</div>` : ""}
-    <div style="color:#3f3f46;margin-top:8px;font-size:9px;line-height:1.5;">
-      Click <span style="color:#22d3ee;">module</span> to open it. Click signal / [follow] to re-trace.
+
+    ${trace.truncated ? `<div style="color:#f59e0b;margin-top:8px;font-size:10px;">Trace truncated at max depth.</div>` : ""}
+    <div style="color:#52525b;margin-top:10px;font-size:10px;border-top:1px solid #27272a;padding-top:8px;">
+      Click <span style="color:#f59e0b;">step \u2192</span> to follow a signal forward.${crossTraceHistory.length > 0 ? " Use Back to retrace your steps." : ""}
+      Click <span style="color:#22d3ee;">module</span> to open its schematic.
     </div>
   `;
 
+  // ── Event listeners ──
+
   panel.querySelector("#closeCrossTracePanel")?.addEventListener("click", () => {
+    clearCrossTraceHighlights();
+    crossTraceHistory.length = 0;
     panel.remove();
   });
 
-  panel.querySelector("#traceModeToggle")?.addEventListener("click", () => {
-    panel[modeKey] = panel[modeKey] === "summary" ? "details" : "summary";
+  // Back button
+  panel.querySelector("#xtraceBackBtn")?.addEventListener("click", () => {
+    const prev = crossTraceHistory.pop();
+    if (prev) {
+      if (prev.module !== state.selectedModule) {
+        loadGraph(prev.module).then(() => requestCrossModuleTrace(prev.module, prev.signal, true));
+      } else {
+        requestCrossModuleTrace(prev.module, prev.signal, true);
+      }
+    }
+  });
+
+  // Breadcrumb history jumps
+  panel.querySelectorAll(".xtrace-history-jump").forEach((el) => {
+    el.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      const idx = parseInt(el.getAttribute("data-history-index"), 10);
+      if (isNaN(idx) || idx < 0) return;
+      const target = crossTraceHistory[idx];
+      crossTraceHistory.length = idx;
+      if (target) {
+        if (target.module !== state.selectedModule) {
+          loadGraph(target.module).then(() => requestCrossModuleTrace(target.module, target.signal, true));
+        } else {
+          requestCrossModuleTrace(target.module, target.signal, true);
+        }
+      }
+    });
+  });
+
+  panel.querySelector("#traceExpandFanin")?.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    panel[expandKey].fanin = true;
     renderCrossModuleTracePanel(trace);
   });
 
   panel.querySelector("#traceExpandFanout")?.addEventListener("click", (ev) => {
     ev.preventDefault();
-    panel[modeKey] = "details";
+    panel[expandKey].fanout = true;
     renderCrossModuleTracePanel(trace);
   });
 
+  // "step →" buttons — push current origin to history and re-trace from clicked signal
+  panel.querySelectorAll(".xtrace-step").forEach((el) => {
+    el.addEventListener("click", async (ev) => {
+      ev.preventDefault();
+      const mod = ev.currentTarget.getAttribute("data-trace-module");
+      const sig = ev.currentTarget.getAttribute("data-trace-signal");
+      if (mod && sig) {
+        // Push current origin onto history
+        crossTraceHistory.push({ module: origin.module, signal: origin.signal });
+        if (mod !== state.selectedModule) {
+          await loadGraph(mod);
+        }
+        requestCrossModuleTrace(mod, sig, true);
+      }
+    });
+  });
+
+  // Navigate to module schematic
   panel.querySelectorAll(".xtrace-nav").forEach((el) => {
     el.addEventListener("click", async (ev) => {
       ev.preventDefault();
       const mod = ev.currentTarget.getAttribute("data-trace-module");
       if (mod && mod !== state.selectedModule) {
         await loadGraph(mod);
+        // Re-apply highlights on the new schematic
+        applyCrossTraceHighlights(trace);
       }
     });
   });
 
+  // Re-trace from a signal (replaces current trace, no history push)
   panel.querySelectorAll(".xtrace-retrace").forEach((el) => {
     el.addEventListener("click", async (ev) => {
       ev.preventDefault();
       const mod = ev.currentTarget.getAttribute("data-trace-module");
       const sig = ev.currentTarget.getAttribute("data-trace-signal");
       if (mod && sig) {
+        // Push current origin onto history
+        crossTraceHistory.push({ module: origin.module, signal: origin.signal });
         if (mod !== state.selectedModule) {
           await loadGraph(mod);
         }
-        requestCrossModuleTrace(mod, sig);
+        requestCrossModuleTrace(mod, sig, true);
       }
     });
   });
+
+  // Hover effect on hop rows
+  panel.querySelectorAll(".xtrace-hop").forEach((row) => {
+    row.addEventListener("mouseenter", () => { row.style.background = "rgba(255,255,255,0.05)"; });
+    row.addEventListener("mouseleave", () => { row.style.background = "rgba(255,255,255,0.025)"; });
+  });
 }
+
+// ── Signal trace history (step-by-step navigation) ──────────────────────
+const signalTraceHistory = [];
 
 function renderSignalTracePanel(trace) {
   if (!trace) {
@@ -3657,28 +3943,31 @@ function renderSignalTracePanel(trace) {
     panel.id = "signalTracePanel";
     panel.style.cssText = `
       position: absolute; top: 8px; left: 8px; z-index: 200;
-      background: #18181b; border: 1px solid rgba(255,255,255,0.10); border-radius: 4px;
-      padding: 10px 12px; min-width: 260px; max-width: 380px;
-      max-height: 60vh; overflow-y: auto; color: #e4e4e7;
-      font-family: 'IBM Plex Mono', Consolas, Monaco, monospace; font-size: 11px;
+      background: #18181b; border: 1px solid rgba(255,255,255,0.10); border-radius: 6px;
+      padding: 14px 16px; min-width: 280px; max-width: 400px;
+      max-height: 70vh; overflow-y: auto; color: #e4e4e7;
+      font-family: 'IBM Plex Mono', Consolas, Monaco, monospace; font-size: 12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.5);
     `;
     const canvas = document.getElementById("graphCanvas");
     if (canvas) canvas.appendChild(panel);
   }
 
   const kindIcon = (kind) => {
-    if (kind === "module_io") return "\u25c6"; // ◆
-    if (kind === "instance") return "\u25a0"; // ■
-    if (kind === "always") return "\u25b6"; // ▶
-    if (kind === "assign") return "\u2190"; // ←
-    if (kind === "gate") return "\u25b3"; // △
-    return "\u25cb"; // ○
+    if (kind === "module_io") return "\u25c6";
+    if (kind === "instance") return "\u25a0";
+    if (kind === "always") return "\u25b6";
+    if (kind === "assign") return "\u2190";
+    if (kind === "gate") return "\u25b3";
+    return "\u25cb";
   };
 
-  const renderSteps = (steps, color, label) => {
-    if (!steps.length) return `<div style="color:#52525b;margin:2px 0;">${label}: (none)</div>`;
+  // Build a flat, deduplicated list grouped by parent block.
+  // Each row: "block.port  via net_name"  — clickable to re-trace from that port.
+  const renderSection = (steps, color, heading, emptyText) => {
+    if (!steps.length) return `<div style="color:#52525b;margin:6px 0 2px;font-size:11px;">${emptyText}</div>`;
 
-    // Group consecutive steps by parent instance.
+    // Group by parent instance for readability.
     const groups = [];
     for (const step of steps) {
       const last = groups[groups.length - 1];
@@ -3694,19 +3983,21 @@ function renderSignalTracePanel(trace) {
       }
     }
 
-    let html = `<div style="color:${color};font-weight:600;margin:6px 0 3px;font-size:10px;letter-spacing:0.06em;text-transform:uppercase;">${label}</div>`;
+    let html = `<div style="color:${color};font-weight:700;margin:10px 0 6px;font-size:11px;letter-spacing:0.04em;">${heading}</div>`;
     for (const group of groups) {
       const icon = kindIcon(group.parentKind);
-      const portList = group.ports.map((p) => {
-        const netTag = p.netName ? `<span style="color:#22d3ee;"> [${escapeHtml(p.netName)}]</span>` : "";
-        const arrow = p.crossedInstance ? " \u2192 " : ""; // →
-        const dirTag = p.direction === "input" ? "\u2192" : p.direction === "output" ? "\u2190" : "\u2194";
-        return `${arrow}<span style="color:#71717a;">${dirTag}</span> ${escapeHtml(p.portName)}${netTag}`;
-      }).join("<br>");
-      html += `<div style="margin:2px 0 2px 6px;padding:3px 6px;border-left:1.5px solid ${color};background:rgba(255,255,255,0.02);border-radius:0 2px 2px 0;">
-        <div style="font-weight:600;">${icon} ${escapeHtml(group.parentLabel)}</div>
-        <div style="margin-left:10px;">${portList}</div>
-      </div>`;
+      html += `<div style="margin:0 0 4px 0;padding:6px 8px;border-left:2.5px solid ${color};background:rgba(255,255,255,0.025);border-radius:0 4px 4px 0;">`;
+      html += `<div style="font-weight:600;font-size:12px;margin-bottom:3px;">${icon} ${escapeHtml(group.parentLabel)}</div>`;
+      for (const p of group.ports) {
+        const net = p.netName ? `<span style="color:#22d3ee;font-size:10px;"> via <strong>${escapeHtml(p.netName)}</strong></span>` : "";
+        const crossed = p.crossedInstance ? `<span style="color:#71717a;font-size:10px;"> (through)</span>` : "";
+        html += `<div class="strace-port-row" data-port-id="${escapeHtml(p.portId)}" style="margin:2px 0 2px 12px;padding:3px 6px;border-radius:3px;cursor:pointer;display:flex;align-items:baseline;gap:6px;transition:background 0.1s;">`;
+        html += `<span style="color:${color};font-size:10px;flex-shrink:0;">${p.direction === "input" ? "\u2192" : p.direction === "output" ? "\u2190" : "\u2194"}</span>`;
+        html += `<span style="color:#e4e4e7;">${escapeHtml(p.portName)}</span>${net}${crossed}`;
+        html += `<span style="color:#52525b;font-size:9px;margin-left:auto;flex-shrink:0;">trace \u2192</span>`;
+        html += `</div>`;
+      }
+      html += `</div>`;
     }
     return html;
   };
@@ -3714,20 +4005,50 @@ function renderSignalTracePanel(trace) {
   const origin = trace.origin;
   const originIcon = kindIcon(origin.parentKind);
 
+  // Build breadcrumb trail from history
+  let breadcrumbHtml = "";
+  if (signalTraceHistory.length > 0) {
+    const crumbs = signalTraceHistory.map((h, i) =>
+      `<a href="#" class="strace-history-jump" data-history-index="${i}" style="color:#22d3ee;text-decoration:none;white-space:nowrap;">${escapeHtml(h.parentLabel)}.${escapeHtml(h.portName)}</a>`
+    );
+    breadcrumbHtml = `
+      <div style="display:flex;align-items:center;gap:4px;margin-bottom:8px;padding:5px 8px;background:rgba(255,255,255,0.025);border-radius:4px;overflow-x:auto;font-size:10px;flex-wrap:wrap;">
+        <span style="color:#71717a;flex-shrink:0;">Path:</span>
+        ${crumbs.join('<span style="color:#3f3f46;flex-shrink:0;"> \u2192 </span>')}
+        <span style="color:#3f3f46;flex-shrink:0;"> \u2192 </span>
+        <span style="color:#e4e4e7;font-weight:600;white-space:nowrap;">${escapeHtml(origin.parentLabel)}.${escapeHtml(origin.portName)}</span>
+      </div>`;
+  }
+
+  const backButton = signalTraceHistory.length > 0
+    ? `<button id="traceBackBtn" style="background:none;border:1px solid #3f3f46;color:#a1a1aa;cursor:pointer;font-size:10px;padding:2px 8px;border-radius:3px;display:flex;align-items:center;gap:3px;"><span>\u2190</span> Back</button>`
+    : "";
+
   panel.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-      <span style="font-weight:600;font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:#a1a1aa;">Signal Trace</span>
-      <button id="closeTracePanel" style="background:none;border:none;color:#52525b;cursor:pointer;font-size:14px;line-height:1;">&times;</button>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        ${backButton}
+        <span style="font-weight:700;font-size:12px;letter-spacing:0.06em;text-transform:uppercase;color:#a1a1aa;">Signal Trace</span>
+      </div>
+      <button id="closeTracePanel" style="background:none;border:none;color:#71717a;cursor:pointer;font-size:16px;line-height:1;padding:2px 4px;">&times;</button>
     </div>
-    <div style="padding:3px 6px;border:1px solid rgba(34,211,238,0.3);border-radius:3px;margin-bottom:6px;background:rgba(34,211,238,0.06);">
-      <span style="color:#22d3ee;font-size:10px;font-weight:500;">ORIGIN</span> ${originIcon} <strong>${escapeHtml(origin.parentLabel)}</strong>
-      .${escapeHtml(origin.portName)}
+
+    ${breadcrumbHtml}
+
+    <div style="padding:8px 10px;border:1.5px solid rgba(34,211,238,0.35);border-radius:5px;margin-bottom:8px;background:rgba(34,211,238,0.07);">
+      <div style="color:#22d3ee;font-size:9px;font-weight:700;letter-spacing:0.1em;margin-bottom:3px;">TRACING</div>
+      <div style="font-size:13px;font-weight:600;">${originIcon} ${escapeHtml(origin.parentLabel)}<span style="color:#71717a;">.</span>${escapeHtml(origin.portName)}</div>
     </div>
-    ${renderSteps(trace.upstream, "#4ade80", "\u25b2 Upstream (sources)")}
-    ${renderSteps(trace.downstream, "#60a5fa", "\u25bc Downstream (sinks)")}
-    <div style="color:#3f3f46;margin-top:6px;font-size:9px;">Double-click port to trace. Click background to clear.</div>
+
+    ${renderSection(trace.upstream, "#4ade80", "\u25b2 Comes from", "No upstream sources found")}
+    ${renderSection(trace.downstream, "#60a5fa", "\u25bc Drives", "No downstream loads found")}
+
+    <div style="color:#52525b;margin-top:10px;font-size:10px;border-top:1px solid #27272a;padding-top:8px;">
+      Click any port to follow the signal there. ${signalTraceHistory.length > 0 ? "Use Back to retrace your steps." : ""}
+    </div>
   `;
 
+  // Close button
   document.getElementById("closeTracePanel").addEventListener("click", () => {
     if (state.cy) {
       state.cy.elements(
@@ -3737,7 +4058,62 @@ function renderSignalTracePanel(trace) {
       );
     }
     state.signalTrace = null;
+    signalTraceHistory.length = 0;
     panel.remove();
+  });
+
+  // Back button
+  document.getElementById("traceBackBtn")?.addEventListener("click", () => {
+    const prev = signalTraceHistory.pop();
+    if (prev) {
+      const node = state.cy.getElementById(prev.portId);
+      if (node && !node.empty()) {
+        state.cy.animate({ center: { eles: node }, duration: 300 });
+      }
+      applySignalTrace(prev.portId, true); // skipHistory = true
+    }
+  });
+
+  // Breadcrumb history jumps — click to go back to that point in the path
+  panel.querySelectorAll(".strace-history-jump").forEach((el) => {
+    el.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      const idx = parseInt(el.getAttribute("data-history-index"), 10);
+      if (isNaN(idx) || idx < 0) return;
+      // Pop history back to that index
+      const target = signalTraceHistory[idx];
+      signalTraceHistory.length = idx; // remove this entry and everything after
+      if (target) {
+        const node = state.cy.getElementById(target.portId);
+        if (node && !node.empty()) {
+          state.cy.animate({ center: { eles: node }, duration: 300 });
+        }
+        applySignalTrace(target.portId, true);
+      }
+    });
+  });
+
+  // Click a port row to follow the signal to that port
+  panel.querySelectorAll(".strace-port-row").forEach((row) => {
+    row.addEventListener("mouseenter", () => { row.style.background = "rgba(255,255,255,0.06)"; });
+    row.addEventListener("mouseleave", () => { row.style.background = ""; });
+    row.addEventListener("click", () => {
+      const portId = row.getAttribute("data-port-id");
+      if (portId) {
+        // Push current origin onto history before navigating
+        signalTraceHistory.push({
+          portId: origin.portId || trace.origin.portId,
+          parentLabel: origin.parentLabel,
+          portName: origin.portName,
+        });
+
+        const node = state.cy.getElementById(portId);
+        if (node && !node.empty()) {
+          state.cy.animate({ center: { eles: node }, duration: 300 });
+        }
+        applySignalTrace(portId, true);
+      }
+    });
   });
 }
 
@@ -3745,7 +4121,7 @@ function renderInspector() {
   const summary = state.summary || {};
   const traceable = getTraceableSelection();
   const traceButton = traceable
-    ? `<button id="traceSignalBtn" data-trace-module="${escapeHtml(traceable.module)}" data-trace-signal="${escapeHtml(traceable.signal)}" style="margin-top:8px;padding:4px 10px;background:#22d3ee;color:#18181b;border:none;border-radius:3px;cursor:pointer;font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;">Trace ${escapeHtml(traceable.label)}</button>`
+    ? `<button id="traceSignalBtn" data-trace-module="${escapeHtml(traceable.module)}" data-trace-signal="${escapeHtml(traceable.signal)}" style="margin-top:10px;padding:6px 12px;background:#22d3ee;color:#18181b;border:none;border-radius:4px;cursor:pointer;font-size:11px;font-weight:700;letter-spacing:0.04em;width:100%;">Trace ${escapeHtml(traceable.label)}</button>`
     : "";
 
   let selectionBlock = "";
